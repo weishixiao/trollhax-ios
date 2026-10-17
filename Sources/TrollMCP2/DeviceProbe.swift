@@ -125,7 +125,10 @@ final class DeviceProbe: ObservableObject {
 
         // v2.9.156：ready 不再依赖 taskForPid——静态injected (insert_dylib+ct_bypass 重签名）
         // 与进程端口无关；TrollStore 非越狱拿不到其他进程端口是常态，不应导致"环境异常"
-        let ready = trollStore && amfidBypassInferred
+        // v6.2.0：ready 不再依赖 detectTrollStore()——包已是 tipa 必然在 TrollStore 环境，
+        // 且 detectTrollStore() 在 TrollStore 2 (iOS15+) 下可能漏报 (无 /.TrollStore 等旧标记)，
+        // 导致检查项全绿却仍显示"环境异常"。以注入链路实际可用为准。
+        let ready = amfidBypassInferred
 
         // v2.9.67：收集增强设备信息
         let modelIdentifier = Self.deviceModelIdentifier()

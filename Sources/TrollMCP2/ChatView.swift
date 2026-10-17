@@ -1143,6 +1143,7 @@ struct QuickTabButton: View {
 // v2.9.36：聊天框"当前模型"点击弹出的上游模型选择（老 MCP 风格半屏）
 struct ChatModelPickerSheet: View {
     @ObservedObject private var modelStore = ModelStore.shared
+    @Environment(\.dismiss) private var dismissSheet
     let onSelect: (ModelConfig) -> Void
 
     var body: some View {
@@ -1172,9 +1173,13 @@ struct ChatModelPickerSheet: View {
                 }
                 Section {
                     Button(action: {
-                        // v2.9.84：打开设置并直接跳到「模型 API」页
-                        AppUIState.shared.settingsJumpToModels = true
-                        AppUIState.shared.settingsPresented = true
+                        // v6.2.0：先关闭当前模型选择 sheet，再延迟弹出设置
+                        // （若不先 dismiss，fullScreenCover 会被当前 sheet 挡住，需二次点击才生效）
+                        dismissSheet()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            AppUIState.shared.settingsJumpToModels = true
+                            AppUIState.shared.settingsPresented = true
+                        }
                     }) {
                         Label("在设置中管理模型", systemImage: "gearshape.fill")
                             .font(.footnote)

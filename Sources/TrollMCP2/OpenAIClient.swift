@@ -72,6 +72,9 @@ final class OpenAIClient {
     /// v4.3.36：思考自动升档标志——低/中档请求成功但响应无任何思考痕迹时，自动以 high 重试一次。
     /// 破甲站等中转 gpt-5.5 实测 low/medium 不触发思考 (reasoning_tokens=0)，只有 high 出思考。
     private var didAutoEscalateReasoning = false
+    /// v6.2.0：429 限流退避重试计数 (参考 OpenMinis 的限流处理)——tpm_exceeded/rate_limit
+    /// 是每分钟 token 限额，稍等可恢复，不应直接判死；最多退避重试 2 次。
+    private var rateLimitRetries = 0
     private var currentCompatLevel: Int;  // v6.0.30: 内存里的兼容级别，避免反复试探死循环
     /// v2.9.87：多级降级总预算——全链串行最坏 7 分钟+，用户感知"一直请求中"。
     /// v2.9.96：试探级 (L0-L4）超时已压到 25s，预算放宽到 220s 给 L5 流式留足时间。
@@ -435,6 +438,28 @@ final class OpenAIClient {
                 NetworkLog.shared.log("\(self.config.name): 模型非视觉，剥离图片后重试 L\(level)")
                 onStatus?("当前模型不支持看图，已自动移除图片重试…")
                 self.attempt(level: level, isFirst: false, messages: stripped, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, avoidL5: avoidL5, completion: completion)
+                return
+            }
+
+            // v6.2.0：429 限流（tpm_exceeded / rate_limit / too many requests / quota）——
+            // 每分钟 token 限额是暂时的，参考 OpenMinis 限流处理：尊重 Retry-After 头
+            // （默认 3s，tpm_exceeded 给 8s）短退避后同级别重试，最多 2 次。
+            let isRateLimit = status == 429 || lowerErr.contains("tpm_exceeded")
+                || lowerErr.contains("rate_limit") || lowerErr.contains("rate limit")
+                || lowerErr.contains("too many requests") || lowerErr.contains("quota exceeded")
+            if isRateLimit, self.rateLimitRetries < 2 {
+                self.rateLimitRetries += 1
+                var wait = 3.0
+                if let retryAfter = http?.value(forHTTPHeaderField: "Retry-After"), let sec = Double(retryAfter) {
+                    wait = max(1, min(sec, 15))
+                }
+                if lowerErr.contains("tpm_exceeded") { wait = 8.0 }
+                NetworkLog.shared.log("\(self.config.name) HTTP \(status) 限流，\(Int(wait))s 后退避重试 (\(self.rateLimitRetries)/2): \(String(failMsg.prefix(120)))")
+                onStatus?("⚠️ 上游限流 (HTTP \(status))，\(Int(wait))s 后自动重试…")
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                    guard let self = self, !self.cancelled else { return }
+                    self.attempt(level: level, isFirst: false, messages: messages, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, avoidL5: avoidL5, completion: completion)
+                }
                 return
             }
 

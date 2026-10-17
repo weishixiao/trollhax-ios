@@ -245,12 +245,20 @@ final class ModelStore: ObservableObject {
 
     func save() {
         // v6.1.5：apiKey 不再明文写 UserDefaults——逐条入 Keychain，UserDefaults 存脱敏副本
+        // v6.2.0：Keychain 写入失败时回退明文存储，保证用户 key 不丢（TrollStore 环境
+        // entitlement 受限时 SecItemAdd 可能失败，宁可降级也不丢配置）
         var sanitized = configs
+        var allSaved = true
         for i in sanitized.indices {
-            KeychainStore.shared.set(sanitized[i].apiKey, forKey: kcKey(for: sanitized[i]))
-            sanitized[i].apiKey = ""
+            let ok = KeychainStore.shared.set(sanitized[i].apiKey, forKey: kcKey(for: sanitized[i]))
+            if ok {
+                sanitized[i].apiKey = ""
+            } else {
+                allSaved = false
+            }
         }
-        if let data = try? JSONEncoder().encode(sanitized) {
+        let payload = allSaved ? sanitized : configs
+        if let data = try? JSONEncoder().encode(payload) {
             rotateBackup()
             UserDefaults.standard.set(data, forKey: key)
         }
