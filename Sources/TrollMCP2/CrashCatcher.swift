@@ -29,15 +29,28 @@ enum CrashCatcher {
     /// v6.2.4：handler 重入保护——backtrace 遍历 iSH 线程栈（swapcontext 边界）可能二次崩溃；
     /// 若 handler 自身段错误引发重入，直接恢复默认处理让系统兜底，避免无限递归。
     private static var inHandler: Int32 = 0
-    /// v6.2.8：主镜像 slide（ASLR 偏移）——在 install() 正常上下文固化。
-    /// 崩溃日志里写出后，可用 tipa 内二进制做符号化：
-    ///   file_offset = runtime_addr - slide - 0x100000000（主可执行文件 __TEXT vmaddr 惯例）
-    /// 之前日志只有裸地址无法定位崩溃函数（本次两个崩溃都无法符号化）。
-    private static var sigSlide: Int = 0
+    /// v6.2.8：主镜像加载基址（mach header 地址）——install() 正常上下文固化。
+    /// 崩溃日志里写出 base= 后，可用 tipa 内二进制符号化：
+    ///   offset = 帧地址 - base（即该符号在二进制中的文件偏移，可直接喂 nm/llvm-nm 或 atos -l base）
+    /// 此前日志只有裸地址，无法定位崩溃函数（用户两次崩溃都无法符号化）。
+    private static var sigImageBase: Int = 0
+    /// dladdr 探测用的本镜像内静态变量地址
+    private static var sigLocalProbe: Int = 0
 
     static func install() {
-        // v6.2.8：固化主镜像 slide（dyld 全局，一次读取）
-        sigSlide = _dyld_get_image_vmaddr_slide(0)
+        // v6.2.8：固化主镜像基址——先试 dlsym(_mh_execute_header)（主可执行文件 mach header），
+        // 失败则用 dladdr 探测本文件静态变量地址所在镜像的 dli_fbase（均为 Darwin/dlopen API，稳定可用）
+        if let h = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_mh_execute_header") {
+            sigImageBase = Int(bitPattern: h)
+        } else {
+            var info = Dl_info()
+            let rc = withUnsafeMutablePointer(to: &sigLocalProbe) { ptr -> Int32 in
+                dladdr(UnsafeRawPointer(ptr), &info)
+            }
+            if rc != 0, let fb = info.dli_fbase {
+                sigImageBase = Int(bitPattern: fb)
+            }
+        }
         // 正常上下文：分配缓冲 + 固化目录 C 路径（handler 内不再碰任何 Swift 对象）
         let dir = crashDir.path
         let c = UnsafeMutablePointer<CChar>.allocate(capacity: crashDirCap)
@@ -143,10 +156,10 @@ enum CrashCatcher {
             strcpy(m, "0x0")
             m += 3
         }
-        // v6.2.8：写出主镜像 slide，便于事后符号化
-        strcpy(m, " slide=")
-        m += 7
-        m = appendHex(m, UInt(bitPattern: sigSlide))
+        // v6.2.8：写出主镜像基址，便于事后符号化（offset = 帧地址 - base）
+        strcpy(m, " base=")
+        m += 6
+        m = appendHex(m, UInt(bitPattern: sigImageBase))
         strcpy(m, " ")
         m += 1
         m = appendInt(m, ts)
