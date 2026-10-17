@@ -701,10 +701,17 @@ struct ChatView: View {
                 }) {
                     Image(systemName: attachExpanded ? "xmark" : "plus")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
+                        // v6.3.0（对齐 OpenMinis）：+ 号改 secondarySystemBackground 底 + label 图标
+                        // （浅色无边框/深色 white 0.35 描边），替代原蓝色实心圆
+                        .foregroundColor(.primary)
                         .frame(width: 32, height: 32)
-                        .background(attachExpanded ? Color.gray : Color.blue)
+                        .background(attachExpanded ? Color(UIColor.tertiarySystemFill) : Color(UIColor.secondarySystemBackground))
                         .clipShape(Circle())
+                        .overlay(
+                            Circle().stroke(
+                                Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.35, alpha: 1) : .clear }),
+                                lineWidth: 1)
+                        )
                 }
                 // v2.9.35：+号 → 半屏"添加内容"面板（对齐老 MCP 设计），不再用 actionSheet
                 // （iOS16 actionSheet 偶发点击无响应 + 无"已选 N"徽标）
@@ -726,9 +733,11 @@ struct ChatView: View {
                     Button(action: send) {
                         Image(systemName: "paperplane.fill")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.white)
+                            // v6.3.0（对齐 OpenMinis）：发送键用 label 色（浅色黑/深色白），
+                            // 禁用态 quaternaryLabel；图标反色。替代原蓝色系统键。
+                            .foregroundColor(Color(UIColor.systemBackground))
                             .frame(width: 32, height: 32)
-                            .background(inputText.isEmpty ? Color.gray : Color.blue)
+                            .background(inputText.isEmpty ? Color(UIColor.quaternaryLabel) : Color(UIColor.label))
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -738,8 +747,13 @@ struct ChatView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             // v3.3.4：整行放进一个大圆角框（终端键/输入框/+号/发送键 一体）
-            .background(Color(.secondarySystemBackground))
+            // v6.3.0（对齐 OpenMinis）：底色 = 浅色纯白 / 深色 white 0.12，加 separator 细描边
+            .background(Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.12, alpha: 1) : .white }))
             .cornerRadius(20)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color(UIColor.separator), lineWidth: 0.5)
+            )
             // v3.4.5：输入框外阴影渐变，往外扩散越来越淡（多层 shadow 叠加模拟渐变发光）
             // v3.4.7：改为灰色扩散、且收敛——用户反馈蓝色扩散太多，应偏灰
             .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 2)
