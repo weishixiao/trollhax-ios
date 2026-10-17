@@ -10,3 +10,7 @@ artifacts
 CISH/include/
 TrollAgent.tipa
 TrollAgent.zip
+
+# build artifacts
+*.zip
+build_out/

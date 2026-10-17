@@ -206,9 +206,29 @@ final class ModelStore: ObservableObject {
                     break
                 }
             }
+            _restoreApiKeysFromKeychain()
             return
         }
         configs = decoded
+        _restoreApiKeysFromKeychain()
+    }
+
+    /// v6.1.5：apiKey Keychain 化——从 Keychain 恢复各 config 的 apiKey；
+    /// 旧版明文（UserDefaults JSON）一次性迁移进 Keychain。
+    private func _restoreApiKeysFromKeychain() {
+        for i in configs.indices {
+            let kc = kcKey(for: configs[i])
+            if let k = KeychainStore.shared.string(forKey: kc) {
+                configs[i].apiKey = k
+            } else if !configs[i].apiKey.isEmpty {
+                // 老版本明文 apiKey 还留在 UserDefaults → 迁到 Keychain（下次 save 会写脱敏副本）
+                KeychainStore.shared.set(configs[i].apiKey, forKey: kc)
+            }
+        }
+    }
+
+    private func kcKey(for config: ModelConfig) -> String {
+        "modelconfig.apikey.\(config.id.uuidString)"
     }
 
     /// v2.9.107：原子写前备份轮换 (保留最近 4 份）
@@ -224,7 +244,13 @@ final class ModelStore: ObservableObject {
     }
 
     func save() {
-        if let data = try? JSONEncoder().encode(configs) {
+        // v6.1.5：apiKey 不再明文写 UserDefaults——逐条入 Keychain，UserDefaults 存脱敏副本
+        var sanitized = configs
+        for i in sanitized.indices {
+            KeychainStore.shared.set(sanitized[i].apiKey, forKey: kcKey(for: sanitized[i]))
+            sanitized[i].apiKey = ""
+        }
+        if let data = try? JSONEncoder().encode(sanitized) {
             rotateBackup()
             UserDefaults.standard.set(data, forKey: key)
         }

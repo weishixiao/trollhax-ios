@@ -30,8 +30,8 @@ final class RemoteTerminalServer {
         set { UserDefaults.standard.set(newValue, forKey: "remote_terminal_port") }
     }
     var token: String {
-        get { UserDefaults.standard.string(forKey: "remote_terminal_token") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "remote_terminal_token") }
+        get { KeychainStore.shared.string(forKey: "remote_terminal_token") ?? "" }
+        set { KeychainStore.shared.set(newValue, forKey: "remote_terminal_token") }
     }
     var allowDangerous: Bool {
         get { UserDefaults.standard.bool(forKey: "remote_terminal_allow_dangerous") }

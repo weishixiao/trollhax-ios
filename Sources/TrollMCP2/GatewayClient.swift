@@ -24,7 +24,7 @@ final class GatewayClient: ObservableObject {
 
     init() {
         serverURL = UserDefaults.standard.string(forKey: key) ?? ""
-        pairedToken = UserDefaults.standard.string(forKey: tokenKey)
+        pairedToken = KeychainStore.shared.string(forKey: tokenKey)
         // v2.9.10：网络restored / 回前台自动重连 (解决"切后台再回来连接中断"）
         // 用闭包观察者而非 #selector (GatewayClient 非 NSObject 子类，#selector 不可用）
         NotificationCenter.default.addObserver(
@@ -43,7 +43,7 @@ final class GatewayClient: ObservableObject {
     private func autoReconnect() {
         guard !isConnected,
               let url = UserDefaults.standard.string(forKey: key), !url.isEmpty else { return }
-        let token = UserDefaults.standard.string(forKey: tokenKey)
+        let token = KeychainStore.shared.string(forKey: tokenKey)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self, !self.isConnected else { return }
             self.connect(url: url, token: token)
@@ -59,7 +59,7 @@ final class GatewayClient: ObservableObject {
         serverURL = url
         pairedToken = token ?? pairedToken
         UserDefaults.standard.set(url, forKey: key)
-        if let t = pairedToken { UserDefaults.standard.set(t, forKey: tokenKey) }
+        if let t = pairedToken { KeychainStore.shared.set(t, forKey: tokenKey) }
 
         guard let wsURL = URL(string: url) else {
             lastError = "invalid URL"

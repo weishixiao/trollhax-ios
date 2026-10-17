@@ -4,13 +4,6 @@ import Darwin
 import CommonCrypto
 import SQLite3
 
-/// 终端会话管理 (单例，v3.0.93: 已废弃 - iSH 引擎自己管理 cwd，这个类是死代码）
-final class ShellSession {
-    static let shared = ShellSession()
-    private init() {}
-}
-
-
 /// v3.0.36：shell 诊断日志 (Documents/Workspace/shell-diag.log），追查超时/卡死真相
 enum ShellDiag {
     private static let lock = NSLock()
