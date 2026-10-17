@@ -68,8 +68,9 @@ enum CrashCatcher {
         // backtrace 改用裸帧 hex 手写输出（零符号化、纯算术、signal-safe）。
         func arm(_ sig: Int32) {
             var sa = sigaction()
-            sa.__sigaction_u.__sa_sigaction = { (sig: Int32, info: UnsafeMutablePointer<__siginfo_t>?, _: UnsafeMutablePointer<__ucontext>?) in
-                let addr: UnsafeMutableRawPointer? = info?.pointee.si_addr
+            sa.__sigaction_u.__sa_sigaction = { sig, info, _ in
+                // 让编译器从属性类型推断参数类型，避免 SDK 版本间 __siginfo_t/__ucontext 命名差异
+                let addr: UInt = info.map { UInt(bitPattern: $0.pointee.si_addr) } ?? 0
                 CrashCatcher.writeSignal(sig, fault: addr)
             }
             sa.sa_flags = SA_SIGINFO
@@ -92,7 +93,7 @@ enum CrashCatcher {
     /// v6.2.4：① 接收 si_addr 崩溃地址，头行先写崩溃地址并立即 write（先落盘留痕，
     /// 后续动作即使二次崩溃，头行已保存）；② 弃用 backtrace_symbols_fd（符号化器在
     /// iSH 线程栈上读 guest 地址会二次段错误），改手写 hex 输出裸帧地址。
-    private static func writeSignal(_ s: Int32, fault: UnsafeMutableRawPointer?) {
+    private static func writeSignal(_ s: Int32, fault: UInt) {
         // v6.2.4：重入保护——若 backtrace 遍历异常栈二次崩溃引发信号重入，
         // 直接恢复默认处理并重发（不再写盘），避免无限递归
         if OSAtomicCompareAndSwap32(0, 1, &inHandler) == false {
@@ -129,8 +130,8 @@ enum CrashCatcher {
         }
         strcpy(m, " fault=")
         m += 7
-        if let f = fault {
-            m = appendHex(m, UInt(bitPattern: f))
+        if fault != 0 {
+            m = appendHex(m, fault)
         } else {
             strcpy(m, "0x0")
             m += 3

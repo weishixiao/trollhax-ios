@@ -175,7 +175,7 @@ final class ShellExecTool: MCPTool {
             if let guardMsg = ShellExecTool.alpineIOSPathGuard(boundCmd) {
                 return ["command": trimmed, "exit_code": 1, "ios_native": false,
                         "stdout": guardMsg,
-                        "hint": "该命令会被路由到 Alpine，但 Alpine 读不到该 iOS 路径（非 Workspace/Containers 绑定目录，或文件>2MB）。三种解法：①先 cp 到 Workspace：`cp <file> /var/mobile/Documents/Workspace/`，再走 Alpine /ios_workspace 直读分析；②用原生 shell 工具（strings/nm/hexdump 直读大文件）；③对二进制用 binary.symbols / file analyze。"]
+                        "hint": "该命令会被路由到 Alpine，但 Alpine 读不到该 iOS 路径（非 Workspace/Containers 绑定目录，或文件>2MB）。三种解法：①先 cp 到 Workspace：`cp <file> /var/mobile/Documents/Workspace/`，再走 Alpine /ios_workspace 直读分析；②用原生 shell 工具（strings/nm/hexdump 直读大文件、du 统计目录大小、plutil 读 plist——均 iOS 原生直跑，勿用 for 循环绕 Alpine，arm64 上会崩）；③对二进制用 binary.symbols / file analyze。"]
             }
             let (output, exitCode, timedOut) = ISHEngine.exec(boundCmd, timeout: timeout)            // P3 按需补给：Alpine 输出显示缺工具(command not found)且命中白名单 → 自动 apk add 并重跑一次，
             // 免 agent 反复探测缺什么、也避免"先探测→再装→再跑"的多轮试探。
@@ -418,6 +418,15 @@ final class ShellExecTool: MCPTool {
         if trimmed == "df" || trimmed.hasPrefix("df ") {
             let result = ShellExecTool.runIOSDf(iosCmd)
             AuditLog.shared.log("shell.exec (ios df)", detail: String(trimmed.prefix(100)))
+            return result
+        }
+        
+        // 24b. du 命令——iOS 原生 (目录/文件大小，v6.2.5)
+        // 安全关键: 统计大小是最常见需求, 必须原生直通——进 Alpine 会让 iSH 模拟器
+        // 崩溃 (arm64 上 du 执行段错误, 用户实测 "工具执行已中断")。
+        if trimmed == "du" || trimmed.hasPrefix("du ") {
+            let result = ShellExecTool.runIOSDu(iosCmd)
+            AuditLog.shared.log("shell.exec (ios du)", detail: String(trimmed.prefix(100)))
             return result
         }
         
@@ -875,7 +884,7 @@ final class ShellExecTool: MCPTool {
         "ls", "cat", "find", "grep", "echo", "mkdir", "rm", "mv", "cp",
         "tail", "head", "sed", "pwd", "cd", "touch", "wc", "md5sum",
         "sha256sum", "diff", "hexdump", "curl", "wget", "plutil", "sqlite3",
-        "unzip", "df", "free", "uname", "sw_vers", "uptime", "hostname", "ps", "top",
+        "unzip", "df", "du", "free", "uname", "sw_vers", "uptime", "hostname", "ps", "top",
         "kill", "ifconfig", "netstat", "nslookup", "tar", "gzip", "gunzip",
         "ta", "base64", "strings", "nm", "kfd_diag", "python3", "objdump", "class-dump",
         // fix3q: 内置原生工具链（native-tools 交叉编译进 App bin/）——AI 直接调用走原生 ARM64
@@ -938,6 +947,7 @@ final class ShellExecTool: MCPTool {
         case "sqlite3": return runIOSSqlite(iosCmd)
         case "unzip": return runIOSUnzip(iosCmd)
         case "df": return runIOSDf(iosCmd)
+        case "du": return runIOSDu(iosCmd)
         case "free": return runIOSFree(iosCmd)
         case "uname": return runIOSUname(iosCmd)
         case "sw_vers": return runIOSSwVers(iosCmd)
@@ -3746,6 +3756,53 @@ final class ShellExecTool: MCPTool {
                 "stdout": "native unzip 不支持真实解压（已弃用假列表实现）。unzip/zip 会自动路由到 Alpine 真工具链——直接写 `unzip <iOS路径>/x.zip -d <iOS路径>/out` 即可，系统会 autoBind 并真解压。"]
     }
     
+    /// v6.2.5: iOS 原生 du 命令——目录/文件大小统计（含 glob 展开）。
+    /// v6.2.5 动机：AI 统计 App 缓存/目录大小时写 `du -sk <dir>`，之前 du 无原生实现 →
+    /// runIOSPipeline 把它当 Alpine 段 → ISHEngine.exec → iSH(arm64 模拟器) 执行复杂脚本
+    /// 段错误 → 整个 App 崩溃 ("工具执行已中断"). 原生实现后整条链不进 iSH.
+    /// 支持: du -s -k -h -sh <path...>，路径支持 glob (*/?)；无 -s 时列出各子项大小。
+    private static func runIOSDu(_ command: String) -> [String: Any] {
+        let parts = command.split(separator: " ").map(String.init)
+        var summarize = false, human = false
+        var paths: [String] = []
+        for p in parts.dropFirst() {
+            if p.hasPrefix("-"), p.count > 1 {
+                if p.contains("s") { summarize = true }
+                if p.contains("h") { human = true }
+            } else {
+                paths.append(p)
+            }
+        }
+        if paths.isEmpty { paths = ["."] }
+        var lines: [String] = []
+        for raw in paths {
+            let expanded = ShellExecTool.globExpand(raw)
+            for path in expanded {
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
+                    lines.append("du: \(path): No such file or directory")
+                    continue
+                }
+                if summarize || !isDir.boolValue {
+                    let bytes = ShellExecTool.folderSize(path)
+                    lines.append(ShellExecTool.duFmt(bytes, human: human) + "\t" + path)
+                } else {
+                    // 无 -s: 列出目录直接子项大小
+                    if let items = try? FileManager.default.contentsOfDirectory(atPath: path) {
+                        for item in items {
+                            let full = (path as NSString).appendingPathComponent(item)
+                            let bytes = ShellExecTool.folderSize(full)
+                            lines.append(ShellExecTool.duFmt(bytes, human: human) + "\t" + full)
+                        }
+                    }
+                    let total = ShellExecTool.folderSize(path)
+                    lines.append(ShellExecTool.duFmt(total, human: human) + "\ttotal")
+                }
+            }
+        }
+        return ["command": command, "exit_code": 0, "stdout": lines.joined(separator: "\n"), "ios_native": true]
+    }
+
     /// v3.1.33: iOS 原生 df 命令——磁盘空间
     private static func runIOSDf(_ command: String) -> [String: Any] {
         let fm = FileManager.default
@@ -3768,7 +3825,95 @@ final class ShellExecTool: MCPTool {
         return ["command": command, "exit_code": 0, "stdout": output, "ios_native": true]
     }
     
+    // MARK: - du 辅助（v6.2.5：供 runIOSDu 使用，纯 FileManager 统计，不碰 iSH）
+
+    /// 递归统计路径占用字节数（目录=子项累加，文件=自身大小）
+    static func folderSize(_ path: String) -> Int64 {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return 0 }
+        if !isDir.boolValue {
+            return (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
+        }
+        guard let enumerator = FileManager.default.enumerator(atPath: path,
+                                                              includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
+                                                              options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return 0 }
+        var total: Int64 = 0
+        while let url = enumerator.nextObject() as? URL {
+            // 符号链接不跟随（避免循环）
+            if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true { continue }
+            if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
+    }
+
+    /// du 输出格式：human 时 K/M/G 后缀，否则 KB 整数
+    static func duFmt(_ bytes: Int64, human: Bool) -> String {
+        if human {
+            let kb = Double(bytes) / 1024.0
+            if kb < 1 { return "\(bytes)B" }
+            if kb < 1024 { return String(format: "%.0fK", kb) }
+            let mb = kb / 1024.0
+            if mb < 1024 { return String(format: "%.1fM", mb) }
+            let gb = mb / 1024.0
+            return String(format: "%.1fG", gb)
+        }
+        return "\(Int(Double(bytes) / 1024.0))"
+    }
+
+    /// 简单 glob 展开：支持 * 与 ?（Unix 语义，不递归），无匹配时原样返回
+    static func globExpand(_ pattern: String) -> [String] {
+        guard pattern.contains("*") || pattern.contains("?") else { return [pattern] }
+        // 逐级展开：把 / 分段，从最左侧含通配符的段开始
+        let comps = pattern.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        var results: [String] = [""]
+        for (i, comp) in comps.enumerated() {
+            var next: [String] = []
+            let isLast = (i == comps.count - 1)
+            for base in results {
+                let dir = base.isEmpty ? "/" : base
+                let fullPat = (dir == "/" ? "" : dir) + comp
+                if comp.contains("*") || comp.contains("?") {
+                    let re = ShellExecTool.globPatternToRegex(comp)
+                    let entries = (try? FileManager.default.contentsOfDirectory(atPath: dir == "/" ? "/" : dir)) ?? []
+                    var matched = false
+                    for e in entries {
+                        if re.firstMatch(in: e, range: NSRange(location: 0, length: (e as NSString).length)) != nil {
+                            matched = true
+                            let joined = (dir == "/" ? "" : dir) + e
+                            next.append(joined + (isLast ? "" : "/"))
+                        }
+                    }
+                    if !matched { next.append(fullPat) }  // 原样保留，后面 fileExists 判无
+                } else {
+                    let joined = (dir == "/" ? "" : dir) + comp
+                    next.append(joined + (isLast ? "" : "/"))
+                }
+            }
+            results = next
+        }
+        // 去掉首字符多余的 '/'
+        return results.map { $0.hasPrefix("//") ? String($0.dropFirst()) : $0 }
+    }
+
+    /// glob 段 → 正则（保留 * 匹配任意、? 匹配单字符）
+    static func globPatternToRegex(_ pattern: String) -> NSRegularExpression {
+        var rx = "^"
+        for ch in pattern {
+            switch ch {
+            case "*": rx += ".*"
+            case "?": rx += "."
+            case ".", "(", ")", "[", "]", "{", "}", "+", "^", "$", "|", "\\": rx += "\\\\" + String(ch)
+            default: rx += String(ch)
+            }
+        }
+        rx += "$"
+        return (try? NSRegularExpression(pattern: rx)) ?? (try! NSRegularExpression(pattern: "^\(\)$"))
+    }
+
     /// v3.1.33: iOS 原生 free 命令——内存
+
     private static func runIOSFree(_ command: String) -> [String: Any] {
         // 简化版：用 sysctl 拿总内存
         var mib: [Int32] = [CTL_HW, HW_MEMSIZE]
