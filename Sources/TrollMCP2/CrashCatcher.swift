@@ -26,6 +26,9 @@ enum CrashCatcher {
     // 真实崩溃点被掩盖（libsystem_platform.dylib 0x... + 480）。
     private static var crashDirC: UnsafeMutablePointer<CChar>?
     private static let crashDirCap = 1024
+    /// v6.2.4：handler 重入保护——backtrace 遍历 iSH 线程栈（swapcontext 边界）可能二次崩溃；
+    /// 若 handler 自身段错误引发重入，直接恢复默认处理让系统兜底，避免无限递归。
+    private static var inHandler: Int32 = 0
 
     static func install() {
         // 正常上下文：分配缓冲 + 固化目录 C 路径（handler 内不再碰任何 Swift 对象）
@@ -58,10 +61,20 @@ enum CrashCatcher {
         }
 
         // 2) POSIX 信号（EXC_BAD_ACCESS 等内存错误走这里）——handler 只做 signal-safe 的最小写盘
+        // v6.2.4：改用 sigaction + SA_SIGINFO 获取崩溃地址(si_addr)。此前用 signal() 拿不到
+        // 崩溃地址；且旧 handler 调 backtrace_symbols_fd（符号化器，重）在 iSH 线程栈上
+        // 触碰 guest 地址二次段错误（实测 frame 0 = writeSignal+356，fault @0x1792235033 高位 guest
+        // 映射区），导致崩溃日志全空。新实现：头行先写崩溃地址（先落盘，后续即使崩也有留痕），
+        // backtrace 改用裸帧 hex 手写输出（零符号化、纯算术、signal-safe）。
         func arm(_ sig: Int32) {
-            signal(sig) { s in
-                CrashCatcher.writeSignal(s)
+            var sa = sigaction()
+            sa.__sigaction_u.__sa_sigaction = { (sig: Int32, info: UnsafeMutablePointer<__siginfo_t>?, _: UnsafeMutablePointer<__ucontext>?) in
+                let addr: UnsafeMutableRawPointer? = info?.pointee.si_addr
+                CrashCatcher.writeSignal(sig, fault: addr)
             }
+            sa.sa_flags = SA_SIGINFO
+            sigemptyset(&sa.sa_mask)
+            sigaction(sig, &sa, nil)
         }
         arm(SIGABRT)
         arm(SIGSEGV)
@@ -74,9 +87,19 @@ enum CrashCatcher {
     /// v2.9.150b：纯 signal-safe 写盘——上一版用 Swift String 插值/Date/数组，
     /// 在信号上下文里二次崩溃，导致日志全部只记录到 writeSignal 自身、
     /// 真正崩溃点被掩盖。现在只用 C 函数与手写整数拼接：
-    ///   time/mkdir/strcpy/strlen/strsignal/open/write/backtrace/backtrace_symbols_fd/close
-    /// 全部 async-signal-safe（snprintf 是 C 变参函数，Swift 不可用，改手写拼接）。
-    private static func writeSignal(_ s: Int32) {
+    ///   time/mkdir/strcpy/strlen/strsignal/open/write/backtrace/close
+    /// 全部 async-signal-safe。
+    /// v6.2.4：① 接收 si_addr 崩溃地址，头行先写崩溃地址并立即 write（先落盘留痕，
+    /// 后续动作即使二次崩溃，头行已保存）；② 弃用 backtrace_symbols_fd（符号化器在
+    /// iSH 线程栈上读 guest 地址会二次段错误），改手写 hex 输出裸帧地址。
+    private static func writeSignal(_ s: Int32, fault: UnsafeMutableRawPointer?) {
+        // v6.2.4：重入保护——若 backtrace 遍历异常栈二次崩溃引发信号重入，
+        // 直接恢复默认处理并重发（不再写盘），避免无限递归
+        if OSAtomicCompareAndSwap32(0, 1, &inHandler) == false {
+            signal(s, SIG_DFL)
+            raise(s)
+            return
+        }
         let ts = time(nil)
         // v2.9.172：直接用启动时固化的 C 路径，零 Swift runtime 访问
         guard let d = crashDirC, let pb = sigPathBuf, let mb = sigMsgBuf else { return }
@@ -93,7 +116,8 @@ enum CrashCatcher {
         strcpy(p, ".txt")
         let fd = open(pb, O_CREAT | O_WRONLY | O_APPEND, 0o644)
         guard fd >= 0 else { return }
-        // 头部: "signal <name> @ <ts>\n"
+        // 头部: "signal <name> fault=0x<hex> <ts>\n"——崩溃地址最先落盘，
+        // 头行先 write，后续 backtrace 即使二次崩溃，头行已保存留痕
         var m = mb
         strcpy(m, "signal ")
         m += 7
@@ -103,23 +127,62 @@ enum CrashCatcher {
         } else {
             m = appendInt(m, Int(s))
         }
-        strcpy(m, " @ ")
-        m += 3
+        strcpy(m, " fault=")
+        m += 7
+        if let f = fault {
+            m = appendHex(m, UInt(bitPattern: f))
+        } else {
+            strcpy(m, "0x0")
+            m += 3
+        }
+        strcpy(m, " ")
+        m += 1
         m = appendInt(m, ts)
         strcpy(m, "\n")
         _ = write(fd, mb, strlen(mb))
-        // backtrace/backtrace_symbols_fd 均为 async-signal-safe
-        // v6.2.2：用预分配帧缓冲（避免信号上下文 malloc 二次崩溃）
+        // backtrace/backtrace 均为 async-signal-safe；裸帧地址手写 hex 输出，
+        // 不做符号化（符号化器在异常栈上可能二次崩溃——v6.2.4 修复）
         guard let frames = sigFramesBuf else {
             close(fd)
             return
         }
         let n = backtrace(frames, Int32(sigFrameCap))
-        backtrace_symbols_fd(frames, n, fd)
+        for i in 0..<Int(n) {
+            m = mb
+            m = appendHex(m, UInt(bitPattern: frames[i]))
+            strcpy(m, "\n")
+            _ = write(fd, mb, strlen(mb))
+        }
         close(fd)
         // 恢复默认处理并重发，让系统也生成官方崩溃报告
         signal(s, SIG_DFL)
+        inHandler = 0
         raise(s)
+    }
+
+    /// 手写 UInt→hex ASCII 追加到 p（signal-safe：纯算术、无字符串，零 Swift 运行时）
+    /// 返回结尾（'\0' 位置）的下一位置
+    private static func appendHex(_ p: UnsafeMutablePointer<CChar>, _ v: UInt) -> UnsafeMutablePointer<CChar> {
+        var q = p
+        var started = false
+        var shift: UInt = 60
+        while true {
+            let d = (v >> shift) & 0xF
+            if d != 0 || started {
+                started = true
+                // 0-9 → '0'+d; 10-15 → 'a'+(d-10)
+                q[0] = d < 10 ? CChar(48 + Int(d)) : CChar(97 + Int(d) - 10)
+                q += 1
+            }
+            if shift == 0 { break }
+            shift -= 4
+        }
+        if !started {
+            q[0] = 48  // '0'
+            q += 1
+        }
+        q[0] = 0
+        return q
     }
 
     /// 手写整数→ASCII 追加到 p 末尾（signal-safe：纯算术+指针，零 Swift 运行时）
