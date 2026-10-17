@@ -14,7 +14,7 @@ enum CrashCatcher {
     private static var sigPathBuf: UnsafeMutablePointer<CChar>?
     private static var sigMsgBuf: UnsafeMutablePointer<CChar>?
     private static let sigPathCap = 1024
-    private static let sigMsgCap = 128
+    private static let sigMsgCap = 256   // v6.2.8：头行新增 slide 字段，扩容防溢出
     /// v6.2.2：backtrace 帧缓冲也预分配——旧版在信号处理器内每次 allocate，
     /// 而 malloc 非 async-signal-safe，崩溃现场堆已损坏时 allocate 可能二次段错误，
     /// 导致日志只写了一半/为空（实测"最新的三次日志全部为空"）。
@@ -29,8 +29,15 @@ enum CrashCatcher {
     /// v6.2.4：handler 重入保护——backtrace 遍历 iSH 线程栈（swapcontext 边界）可能二次崩溃；
     /// 若 handler 自身段错误引发重入，直接恢复默认处理让系统兜底，避免无限递归。
     private static var inHandler: Int32 = 0
+    /// v6.2.8：主镜像 slide（ASLR 偏移）——在 install() 正常上下文固化。
+    /// 崩溃日志里写出后，可用 tipa 内二进制做符号化：
+    ///   file_offset = runtime_addr - slide - 0x100000000（主可执行文件 __TEXT vmaddr 惯例）
+    /// 之前日志只有裸地址无法定位崩溃函数（本次两个崩溃都无法符号化）。
+    private static var sigSlide: Int = 0
 
     static func install() {
+        // v6.2.8：固化主镜像 slide（dyld 全局，一次读取）
+        sigSlide = _dyld_get_image_vmaddr_slide(0)
         // 正常上下文：分配缓冲 + 固化目录 C 路径（handler 内不再碰任何 Swift 对象）
         let dir = crashDir.path
         let c = UnsafeMutablePointer<CChar>.allocate(capacity: crashDirCap)
@@ -136,6 +143,10 @@ enum CrashCatcher {
             strcpy(m, "0x0")
             m += 3
         }
+        // v6.2.8：写出主镜像 slide，便于事后符号化
+        strcpy(m, " slide=")
+        m += 7
+        m = appendHex(m, UInt(bitPattern: sigSlide))
         strcpy(m, " ")
         m += 1
         m = appendInt(m, ts)

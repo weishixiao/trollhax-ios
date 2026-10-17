@@ -22,6 +22,7 @@ struct ChatView: View {
     // UIKit 方案真机稳定。标记位 + sheet onDismiss 触发，保证面板完全关闭后再 present（不再猜时间延迟）。
     @State private var pendingFilePick = false
     @State private var showModelPicker = false  // v2.9.36：聊天框切换上游模型
+    @State private var showQuickSwitch = false  // v6.2.8：快速切换（含上游模型列表）
     // v3.3.4：输入框 + 号展开"应用/相册/文件/浏览器"快捷行（点 + 变 x 收起）
     @State private var attachExpanded = false
 
@@ -73,13 +74,18 @@ struct ChatView: View {
                                     showToast("已切换：\(cfg.name)")
                                 }) {
                                     if cfg.isDefault {
-                                        Label(cfg.name, systemImage: "checkmark.circle.fill")
+                                        Label("\(cfg.name) · \(cfg.model)", systemImage: "checkmark.circle.fill")
                                     } else {
-                                        Text(cfg.name)
+                                        Text("\(cfg.name) · \(cfg.model)")
                                     }
                                 }
                             }
                             Divider()
+                            // v6.2.8：用户反馈"快速切换只有模型名称，没有中转站各个模型"——
+                            // 增加上游模型列表入口：读取该中转站 /models，点选即切到对应模型
+                            Button(action: { showQuickSwitch = true }) {
+                                Label("更多模型（获取中转站模型列表）", systemImage: "arrow.triangle.2.circlepath")
+                            }
                             Button(action: {
                                 AppUIState.shared.settingsJumpToModels = true
                                 AppUIState.shared.settingsPresented = true
@@ -275,6 +281,10 @@ struct ChatView: View {
             }
         }
         // v2.9.36：聊天框切换上游模型（点"当前模型"弹出，老 MCP 风格半屏）
+        .sheet(isPresented: $showQuickSwitch) {
+            // v6.2.8：快速切换模型（含上游中转站模型列表）
+            QuickModelSwitchSheet()
+        }
         .sheet(isPresented: $showModelPicker) {
             // 老 MCP 半屏；presentationDetents 需 iOS16+
             if #available(iOS 16.0, *) {
@@ -1451,13 +1461,18 @@ struct MessageBubble: View {
     /// v4.4.21：消息文本视图——流式/打字机/用户消息用轻量 Text（避免 UITextView 高频刷新闪跳）；assistant 完成消息用 SelectableText(UITextView) 长按选字/划词/复制
     @ViewBuilder
     private func messageTextView(_ shown: String) -> some View {
+        // v6.2.8（对齐 OpenMinis）：正文字号 16.5；超长文本（>5 万字）截断渲染，
+        // 避免单条消息超长文本拖垮 SwiftUI 布局（崩溃 3 巨型递归栈的可疑诱因之一）
+        let capped = shown.count > 50000
+            ? String(shown.prefix(50000)) + "\n\n…[内容过长，仅渲染前 5 万字；完整内容见会话数据]"
+            : shown
         if isStreaming || forceType || isUser {
-            Text(isUser ? AttributedString(shown) : coloredBody(shown))
-                .font(.body)
+            Text(isUser ? AttributedString(capped) : coloredBody(capped))
+                .font(.system(size: 16.5))
                 .textSelection(.enabled)
         } else {
             // v4.5.0：完成消息用原生 NSAttributedString 富文本（加粗/橙色/暗黑模式都正确渲染），避免 SwiftUI AttributedString 桥接丢失样式
-            SelectableText(attributed: attributedBody(shown), textColor: .label)
+            SelectableText(attributed: attributedBody(capped), textColor: .label)
         }
     }
 
@@ -1566,19 +1581,20 @@ struct MessageBubble: View {
                         .padding(.vertical, 10)
                         // v3.3.4：AI 回复气泡从左拉伸到右（全宽）；用户气泡保持靠右自适应
                         .frame(maxWidth: isUser ? nil : .infinity, alignment: .leading)
-                        // v2.9.93：用户气泡改巨魔蓝渐变（浅青→蓝，品牌化），助手保持系统色
+                        // v6.2.8：对齐 OpenMinis 会话样式——用户气泡改淡灰 tertiarySystemFill + 常规文字色
+                        // （原巨魔蓝渐变），AI 回复去气泡背景（纯文本，更干净）。字号 16.5 见 messageTextView
                         .background(
                             Group {
                                     if isUser {
-                                        LinearGradient(colors: [.tmCyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                        Color(UIColor.tertiarySystemFill)
                                     } else if message.isError {
                                         Color.red.opacity(0.15)
                                     } else {
-                                        Color(.secondarySystemBackground)
+                                        Color.clear
                                     }
                                 }
                         )
-                        .foregroundColor(isUser ? .white : .primary)
+                        .foregroundColor(.primary)
                         .cornerRadius(18)
                         .overlay(
                             RoundedRectangle(cornerRadius: 18)

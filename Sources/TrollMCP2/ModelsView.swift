@@ -16,9 +16,8 @@ struct ModelsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // v4.3.27：推荐卡片区——全宽直达外框（去掉 insetGrouped 内框），
-            // 顺序：推荐破甲站第一、推荐中转站第二（用户要求）；面板加大加宽。
-            RecommendCardArea()
+            // v6.2.8：按用户要求删除两张推广卡片（推荐破甲站/推荐中转站）
+            // RecommendCardArea()  ← 已移除
 
             List {
                 if store.configs.isEmpty {
