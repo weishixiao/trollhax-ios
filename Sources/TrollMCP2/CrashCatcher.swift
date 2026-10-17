@@ -114,7 +114,7 @@ enum CrashCatcher {
             close(fd)
             return
         }
-        let n = backtrace(frames, sigFrameCap)
+        let n = backtrace(frames, Int32(sigFrameCap))
         backtrace_symbols_fd(frames, n, fd)
         close(fd)
         // 恢复默认处理并重发，让系统也生成官方崩溃报告
