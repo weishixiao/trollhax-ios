@@ -62,7 +62,31 @@ struct ChatView: View {
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .lineLimit(1)
-                        Button(action: { showModelPicker = true }) {
+                        // v6.2.7：模型快速切换——旧实现点模型名弹 sheet(半屏+导航层)，用户反馈"无法快速切换"。
+                        // 改系统 Menu 下拉：点模型名直接出菜单列全部模型，一点即切，零 sheet 零导航。
+                        Menu {
+                            ForEach(modelStore.configs) { cfg in
+                                Button(action: {
+                                    var c = cfg
+                                    c.isDefault = true
+                                    modelStore.update(c)
+                                    showToast("已切换：\(cfg.name)")
+                                }) {
+                                    if cfg.isDefault {
+                                        Label(cfg.name, systemImage: "checkmark.circle.fill")
+                                    } else {
+                                        Text(cfg.name)
+                                    }
+                                }
+                            }
+                            Divider()
+                            Button(action: {
+                                AppUIState.shared.settingsJumpToModels = true
+                                AppUIState.shared.settingsPresented = true
+                            }) {
+                                Label("在设置中管理模型", systemImage: "gearshape.fill")
+                            }
+                        } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "circle.fill")
                                     .font(.system(size: 7))
@@ -76,7 +100,6 @@ struct ChatView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
-                        .buttonStyle(PlainButtonStyle())
                     }
                 }
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -88,11 +111,8 @@ struct ChatView: View {
                                 Image(systemName: "line.horizontal.3")
                                     .font(.system(size: 18, weight: .semibold))
                             }
-                            // v6.0.28：加号按钮放在左边（三横线后面，新建会话）
-                            Button(action: { store.newConversation() }) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 18, weight: .semibold))
-                            }
+                            // v6.2.7：按用户要求删除左上角 + 号新建会话按钮
+                            // （新建入口保留在侧滑抽屉头部 + 抽屉内长按管理）
                         }
                     }
                 }
@@ -108,20 +128,8 @@ struct ChatView: View {
                                 .disabled(selectedIds.isEmpty)
                         }
                     } else {
-                        HStack(spacing: 14) {
-                            // v4.4.18：全局朗读开关——开着时 AI 流式回复自动朗读
-                            Button(action: { withAnimation { tts.speakerEnabled.toggle() } }) {
-                                Image(systemName: tts.speakerEnabled ? "speaker.wave.2.fill" : "speaker.wave.2")
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundColor(tts.speakerEnabled ? .tmCyan : .secondary)
-                            }
-                            // 勾选/选择按钮
-                            Button(action: enterSelection) {
-                                Image(systemName: "checkmark.circle")
-                                    .font(.system(size: 18, weight: .semibold))
-                            }
-                            .disabled(store.currentMessages.isEmpty)
-                        }
+                        // v6.2.7：按用户要求删除右上角喇叭(TTS 开关)与确认勾选(选择模式)按钮
+                        EmptyView()
                     }
                 }
             }
@@ -147,8 +155,23 @@ struct ChatView: View {
                         .padding(.top, 8)
                 }
             }, alignment: .top)
-            // v6.0.7：去掉聊天页右下角小女孩 overlay——桌面悬浮 HUD 已是小女孩，再叠一个会重复成两个。
-            // （原 v4.5.0 的 GirlCompanionView 悬浮已移除；GirlCompanion.enabled 仍用于 AppMain 自动拉起桌面悬浮）
+            // v6.2.7：边缘侧滑开关会话抽屉（用户反馈"会话页侧滑无法打开添加新对话页"）。
+            // 左缘(x<40)右滑 → 打开抽屉(会话列表/新建入口)；抽屉开时左滑 → 关闭。
+            // 用 simultaneousGesture 不阻挡消息列表垂直滚动；水平主导判定防误触。
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24, coordinateSpace: .global)
+                    .onEnded { value in
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        guard abs(dx) > abs(dy) * 1.4, abs(dx) > 60 else { return }
+                        let ui = AppUIState.shared
+                        if value.startLocation.x < 44 && dx > 0 && !ui.drawerOpen {
+                            withAnimation { ui.drawerOpen = true }
+                        } else if dx < 0 && ui.drawerOpen {
+                            withAnimation { ui.drawerOpen = false }
+                        }
+                    }
+            )
         }
         .navigationViewStyle(.stack)
         // v2.9.31：授权弹窗已整体移除（工具搜索即自动授权，无弹窗）。
@@ -494,6 +517,7 @@ struct ChatView: View {
                             onToggleSelect: { toggleSelect(msg.id) },
                             onCopy: { copyMessage(msg) },
                             onShare: { shareMessage(msg) },
+                            onDelete: { store.removeMessage(id: msg.id) },
                             isStreaming: store.streamingMessageId == msg.id,
                             forceType: store.liveProducedID == msg.id,
                             thinkEnabled: thinkEnabled
@@ -1279,6 +1303,9 @@ struct MessageBubble: View {
     var onToggleSelect: (() -> Void)? = nil
     var onCopy: (() -> Void)? = nil
     var onShare: (() -> Void)? = nil
+    // v6.2.7：长按气泡删除单条消息（用户要求"长按会话框弹出删除功能"——
+    // 顶栏勾选选择模式已移除，删除入口改长按菜单）
+    var onDelete: (() -> Void)? = nil
     // v3.4.5：当前正在流式生成的 AI 消息 → 打字机逐字显示
     var isStreaming: Bool = false
     // v3.4.9：本轮刚生成完成的消息（工具解说/整段到达的回复）也要逐字打出——
@@ -1384,9 +1411,20 @@ struct MessageBubble: View {
             onToggleSelect: onToggleSelect,
             onToolToggle: { withAnimation { expanded.toggle() } }
         ))
-        // v4.4.13：移除 contextMenu——长按文字改为系统选择手柄(.textSelection)，可拖选部分复制。
-        // 此前外层 contextMenu(复制全文/分享)抢占长按, 导致内层 Text 的 .textSelection(.enabled) 永远触发不了
-        // 文字选择。全量复制/分享走多选工具栏(selectionMode: copySelected/shareMessage)。
+        // v6.2.7：长按气泡菜单（复制/分享/删除）——用户要求"长按会话框弹出删除功能"。
+        // 历史 v4.4.13 曾移除 contextMenu 保文字选择；现按用户新要求恢复长按菜单，
+        // 菜单含"复制全文"补偿部分复制需求。
+        .contextMenu {
+            if let onCopy = onCopy {
+                Button(action: onCopy) { Label("复制全文", systemImage: "doc.on.doc") }
+            }
+            if let onShare = onShare {
+                Button(action: onShare) { Label("分享", systemImage: "square.and.arrow.up") }
+            }
+            if let onDelete = onDelete {
+                Button(action: onDelete) { Label("删除此消息", systemImage: "trash") }
+            }
+        }
         // v3.4.5：打字机效果——内容增长即逐字显示，直到完整
         .onAppear {
             if (isStreaming || forceType), revealedCount < message.content.count { startTypeTimer() }

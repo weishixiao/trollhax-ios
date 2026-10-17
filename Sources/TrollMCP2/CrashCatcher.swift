@@ -268,10 +268,19 @@ enum CrashCatcher {
 }
 
 /// 崩溃日志查看页
+/// v6.2.7：sheet(item:) 标识——每次打开新建详情视图，杜绝状态残留
+private struct CrashLogItem: Identifiable {
+    let path: String
+    var id: String { path }
+}
+
 struct CrashLogView: View {
     @State private var paths: [String] = []
-    @State private var showDetail = false
-    @State private var detailContent = ""
+    // v6.2.7：修复"新日志点开空白"——旧实现用单一 @State detailContent + 共享
+    // sheet(isPresented:)，首次弹出时内容视图未随新值重建（状态残留），必须先点开
+    // 旧日志再开新日志才有内容。改 sheet(item:)：每次打开创建全新详情视图，
+    // onAppear 自行读文件，无状态残留。
+    @State private var detailItem: CrashLogItem?
     @State private var toast: String?
     @State private var newestFirst = true
 
@@ -310,8 +319,7 @@ struct CrashLogView: View {
                         let displayed = newestFirst ? paths : Array(paths.reversed())
                         ForEach(displayed, id: \.self) { p in
                         Button {
-                            detailContent = CrashCatcher.preview(p, maxChars: 60000)
-                            showDetail = true
+                            detailItem = CrashLogItem(path: p)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(URL(fileURLWithPath: p).lastPathComponent)
@@ -347,58 +355,8 @@ struct CrashLogView: View {
                     }
             }
         }
-        .sheet(isPresented: $showDetail) {
-            NavigationView {
-                // v2.9.292：空内容/读取失败给占位提示，不再纯白屏
-                Group {
-                    if detailContent.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "doc.text.magnifyingglass")
-                                .font(.system(size: 36))
-                                .foregroundColor(.secondary)
-                            Text("崩溃日志为空或无法读取")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if detailContent == "(读取失败)" {
-                        VStack(spacing: 10) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 36))
-                                .foregroundColor(.orange)
-                            Text("读取失败，请到工作区 crash/ 目录用文件浏览器查看")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        ScrollView {
-                            Text(detailContent)
-                                .font(.system(.footnote, design: .monospaced))
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-                .navigationTitle("崩溃详情")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    // v2.9.179：崩溃日志页彻底不弹分享面板——sig_1789582263 实证
-                    // ShareSheet 枚举图标时 MobileIcons/CoreImage 系统级 Segfault（侧载环境）。
-                    // 分享=复制+提示，保证用户永远能拿到日志。
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
-                            UIPasteboard.general.string = detailContent
-                            toast = "已复制全文（分享面板在侧载环境不可用）"
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                    }
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("完成") { showDetail = false }
-                    }
-                }
-            }
+        .sheet(item: $detailItem) { item in
+            CrashLogDetailView(path: item.path)
         }
         .toolbar {
             // v2.9.179：同样只复制不弹分享面板
@@ -442,4 +400,86 @@ struct CrashLogView: View {
 
 extension String: Identifiable {
     public var id: String { self }
+}
+
+/// v6.2.7：崩溃日志详情视图——sheet(item:) 每次打开新建本视图，
+/// onAppear 自行读文件（保证读到最新落盘内容），彻底修复"新日志点开空白、
+/// 必须先开旧日志再开新日志才有内容"的状态残留 bug。
+struct CrashLogDetailView: View {
+    let path: String
+    @Environment(\.dismiss) private var dismissSheet
+    @State private var content: String? = nil   // nil=未加载; ""=空文件; "(读取失败)"=IO 错误
+    @State private var toast: String?
+
+    var body: some View {
+        NavigationView {
+            Group {
+                if content == nil {
+                    ProgressView()
+                } else if content!.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 36))
+                            .foregroundColor(.secondary)
+                        Text("崩溃日志为空或无法读取")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if content == "(读取失败)" {
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 36))
+                            .foregroundColor(.orange)
+                        Text("读取失败，请到工作区 crash/ 目录用文件浏览器查看")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        Text(content!)
+                            .font(.system(.footnote, design: .monospaced))
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .navigationTitle(URL(fileURLWithPath: path).lastPathComponent)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // v2.9.179：不弹分享面板（侧载环境 ShareSheet 枚举图标系统级 Segfault）——复制代替
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        UIPasteboard.general.string = content ?? ""
+                        toast = "已复制全文（分享面板在侧载环境不可用）"
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("完成") { dismissSheet() }
+                }
+            }
+            .onAppear {
+                content = CrashCatcher.preview(path, maxChars: 60000)
+            }
+            .overlay(alignment: .bottom) {
+                if let toast = toast {
+                    Text(toast)
+                        .font(.footnote)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.black.opacity(0.75))
+                        .foregroundColor(.white)
+                        .cornerRadius(16)
+                        .padding(.bottom, 24)
+                        .onAppear {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.toast = nil }
+                        }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
 }

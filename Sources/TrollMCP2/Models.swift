@@ -683,6 +683,36 @@ final class ConversationStore: ObservableObject {
     /// v2.9.53：当前流式输出的消息 ID (逐字显示时跟踪，done后更新或清理）
     /// v3.4.5：改为 internal（ChatView 用它标记打字机效果的消息）
     var streamingMessageId: UUID?
+    /// v6.2.7：流式渲染节流（参考 OpenMinis 的流式输出处理）——旧实现每个 delta 直接改
+    /// @Published conversations → 整页消息列表重渲染，长输出时主线程每秒重绘上百次 → 会话页卡顿。
+    /// 改为：delta 先进缓冲，80ms 合并 flush 一次（更新频率降一个数量级），
+    /// completion 入口强制 flush 保证尾部不丢。thinkBuffer 仍即时累加（toolCalls 装配依赖）。
+    private var streamDeltaBuffer = ""
+    private var streamThinkBuffer = ""
+    private var streamFlushScheduled = false
+    private func scheduleStreamFlush() {
+        guard !streamFlushScheduled else { return }
+        streamFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            self?.flushStreamBuffers()
+        }
+    }
+    func flushStreamBuffers() {
+        streamFlushScheduled = false
+        let dBuf = streamDeltaBuffer
+        let tBuf = streamThinkBuffer
+        streamDeltaBuffer = ""
+        streamThinkBuffer = ""
+        guard let sid = streamingMessageId, let idx = activeConvIndex,
+              let mi = conversations[idx].messages.firstIndex(where: { $0.id == sid }) else { return }
+        if !dBuf.isEmpty {
+            conversations[idx].messages[mi].content += dBuf
+        }
+        if !tBuf.isEmpty {
+            let existing = conversations[idx].messages[mi].thinking ?? ""
+            conversations[idx].messages[mi].thinking = existing + tBuf
+        }
+    }
     /// v3.4.9：本轮刚"生成完成"的 assistant 消息 ID（工具解说/整段到达的回复）。
     /// ChatView 用它给这些消息开打字机——它们 isStreaming=false 且内容在出现前已定好，
     /// 只能靠"本轮刚产出"这一信号触发逐字显示。请求整体结束后清空。
@@ -1047,19 +1077,18 @@ final class ConversationStore: ObservableObject {
             }
         }, onDelta: { delta in
             // v2.9.53：流式逐字显示
+            // v6.2.7：节流——delta 进缓冲，80ms 合并 flush（见 scheduleStreamFlush），
+            // 避免每个 token 都触发整页重渲染导致长输出卡顿
             DispatchQueue.main.async {
-                if let sid = self.streamingMessageId {
-                    // 追加到已有流式消息 (v3.1.70：按活动会话定位，切换会话不丢增量）
-                    guard let idx = self.activeConvIndex,
-                          let mi = self.conversations[idx].messages.firstIndex(where: { $0.id == sid }) else { return }
-                    self.conversations[idx].messages[mi].content += delta
-                } else {
-                    // 第一次 delta：创建流式消息
-                    let msg = ChatMessage(role: "assistant", content: delta)
+                if self.streamingMessageId == nil {
+                    // 第一次 delta：创建流式消息（空内容，缓冲 flush 时填充）
+                    let msg = ChatMessage(role: "assistant", content: "")
                     self.streamingMessageId = msg.id
                     self.liveProducedID = msg.id
                     self.appendToCurrent(msg)
                 }
+                self.streamDeltaBuffer += delta
+                self.scheduleStreamFlush()
             }
         }, onThinking: { delta in
             // v3.5.4：思考只进黄泡(message.thinking) + thinkBuffer(供 toolCalls 装配)，
@@ -1067,14 +1096,10 @@ final class ConversationStore: ObservableObject {
             // 实时轨迹卡(liveTrail)只显示"工具执行步骤"：工具名/命令/结果，绝不显示思考文字。
             DispatchQueue.main.async {
                 self.thinkBuffer += delta
-                // v3.5.4：思考实时写入流式消息的 thinking(黄色气泡)，随模型思考逐段填充、不打字机。
-                // 若无流式消息(思考先于正文到达)，先建一条空 assistant 消息，把思考挂上去。
-                if let sid = self.streamingMessageId {
-                    if let ci = self.activeConvIndex,
-                       let mi = self.conversations[ci].messages.firstIndex(where: { $0.id == sid }) {
-                        let existing = self.conversations[ci].messages[mi].thinking ?? ""
-                        self.conversations[ci].messages[mi].thinking = existing + delta
-                    }
+                // v6.2.7：思考显示也走节流缓冲（thinkBuffer 即时累加供 toolCalls 装配）
+                if self.streamingMessageId != nil {
+                    self.streamThinkBuffer += delta
+                    self.scheduleStreamFlush()
                 } else {
                     // v3.5.16：防"思考重复两次"——.text 最终化(streamingMessageId=nil)后又来一段 onThinking 时，
                     // 会在这里再建一条空正文+思考消息，与上一条已含相同思考的 assistant 消息重复
@@ -1089,15 +1114,22 @@ final class ConversationStore: ObservableObject {
                         }
                     }
                     if !skipDup {
-                        var msg = ChatMessage(role: "assistant", content: "")
-                        msg.thinking = delta
+                        let msg = ChatMessage(role: "assistant", content: "")
                         self.streamingMessageId = msg.id
                         self.liveProducedID = msg.id
                         self.appendToCurrent(msg)
+                        self.streamThinkBuffer += delta
+                        self.scheduleStreamFlush()
                     }
                 }
             }
         }) { result in
+            // v6.2.7：completion 入口同步 flush 节流缓冲尾部（必须在 finalize 改 streamingMessageId 之前）
+            if Thread.isMainThread {
+                self.flushStreamBuffers()
+            } else {
+                DispatchQueue.main.sync { self.flushStreamBuffers() }
+            }
             DispatchQueue.main.async {
                 self.statusText = nil
                 switch result {

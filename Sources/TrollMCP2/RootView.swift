@@ -199,6 +199,16 @@ struct ConversationDrawerView: View {
                 .font(.title3)
                 .fontWeight(.bold)
             Spacer()
+            // v6.2.7：抽屉头部新建会话入口（配合 ChatView 边缘侧滑手势，
+            // 侧滑开抽屉即可一键新建，解决"侧滑无法打开添加新对话页"）
+            Button(action: {
+                withAnimation { ui.drawerOpen = false }
+                store.newConversation()
+            }) {
+                Image(systemName: "plus.square.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(.blue)
+            }
             Button(action: { withAnimation { ui.drawerOpen = false } }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .semibold))

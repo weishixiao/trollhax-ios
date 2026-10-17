@@ -2499,31 +2499,54 @@ final class ShellExecTool: MCPTool {
         
         var results: [String] = []
         
-        func findRecursive(dir: String, depth: Int) {
-            guard depth <= maxDepth else { return } // 用 -maxdepth 限制深度
-            do {
-                let items = try fm.contentsOfDirectory(atPath: dir)
-                for item in items {
-                    let fullPath = dir + "/" + item
-                    var isDir: ObjCBool = false
-                    fm.fileExists(atPath: fullPath, isDirectory: &isDir)
-                    // v4.3.13: -type f/d 过滤 (缺省全列)
-                    let typeOK = fileType == nil
-                        || (fileType == "f" && !isDir.boolValue)
-                        || (fileType == "d" && isDir.boolValue)
-                    // 匹配文件名 (-name 精确大小写；-iname 忽略大小写）
-                    if item.range(of: nameRegex, options: compareOpts) != nil, typeOK {
-                        results.append(fullPath)
-                    }
-                    // 递归子目录
-                    if isDir.boolValue, depth < maxDepth {
-                        findRecursive(dir: fullPath, depth: depth + 1)
-                    }
-                }
-            } catch {}
-        }
+        // v6.2.7: 崩溃修复——旧实现递归遍历 + results 无上限收集：
+        // `find /var/mobile/Containers/Data/Application -maxdepth N`(无 -name) 会匹配
+        // 全部文件, 遍历整机 App 数据容器(数十万~百万文件) → results 无限增长 →
+        // 内存耗尽/堆损坏 → SIGSEGV (实测 fault=0x9636... 野指针, 后台 pthread 栈)。
+        // 修复: ①改迭代(显式栈, 防递归栈溢出) ②三重上限: 遍历节点/结果数/耗时
+        //    ③符号链接不递归(防环) ④到上限立即停并返回部分结果+提示。
+        let maxNodes = 200_000        // 遍历节点上限 (目录+文件)
+        let maxResults = 50_000       // 结果收集上限
+        let deadline = Date().addingTimeInterval(25)  // 耗时上限 25s
+        var visitedNodes = 0
+        var truncated = false
         
-        findRecursive(dir: resolvedPath, depth: 0)
+        var stack: [(dir: String, depth: Int)] = [(resolvedPath, 0)]
+        while let cur = stack.popLast() {
+            guard cur.depth <= maxDepth else { continue }
+            if visitedNodes >= maxNodes || results.count >= maxResults || Date() > deadline {
+                truncated = true
+                break
+            }
+            visitedNodes += 1
+            guard let items = try? fm.contentsOfDirectory(atPath: cur.dir) else { continue }
+            for item in items {
+                if visitedNodes >= maxNodes || results.count >= maxResults || Date() > deadline {
+                    truncated = true
+                    break
+                }
+                visitedNodes += 1
+                let fullPath = cur.dir + "/" + item
+                var isDir: ObjCBool = false
+                fm.fileExists(atPath: fullPath, isDirectory: &isDir)
+                // v6.2.7: 符号链接不递归 (防 symlink 环; fileExists 的 isDirectory 会跟随链接)
+                var isLink = false
+                if let attrs = try? fm.attributesOfItem(atPath: fullPath),
+                   (attrs[.type] as? FileAttributeType) == .typeSymbolicLink {
+                    isLink = true
+                }
+                let typeOK = fileType == nil
+                    || (fileType == "f" && !isDir.boolValue)
+                    || (fileType == "d" && isDir.boolValue)
+                if item.range(of: nameRegex, options: compareOpts) != nil, typeOK {
+                    results.append(fullPath)
+                }
+                if isDir.boolValue, !isLink, cur.depth < maxDepth {
+                    stack.append((fullPath, cur.depth + 1))
+                }
+            }
+            if truncated { break }
+        }
         
         // 限制结果数量 (v3.1.68: 截断时把全量落盘 tool_spill/，附精确路径——AI 可 cat 全量）
         var out: String
@@ -2532,6 +2555,9 @@ final class ShellExecTool: MCPTool {
             out = results.prefix(100).joined(separator: "\n") + "\n…[共找到 \(results.count) 个，已截断；完整列表: \(spillPath)]"
         } else {
             out = results.joined(separator: "\n")
+        }
+        if truncated {
+            out += "\n[注意: 遍历达到上限(节点20万/结果5万/25秒)提前停止，以上为部分结果。缩小范围请加 -name 模式或更小的 -maxdepth]"
         }
         
         return [
