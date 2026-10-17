@@ -3832,10 +3832,12 @@ final class ShellExecTool: MCPTool {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return 0 }
         if !isDir.boolValue {
-            return (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
+            let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+            return (attrs?[FileAttributeKey.size] as? NSNumber)?.int64Value ?? 0
         }
-        guard let enumerator = FileManager.default.enumerator(atPath: path,
-                                                              includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
+        // 注意: 正确的 API 签名是 enumerator(at:includingPropertiesForKeys:options:)
+        guard let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: path),
+                                                              includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .isSymbolicLinkKey],
                                                               options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return 0 }
         var total: Int64 = 0
         while let url = enumerator.nextObject() as? URL {
@@ -3909,7 +3911,7 @@ final class ShellExecTool: MCPTool {
             }
         }
         rx += "$"
-        return (try? NSRegularExpression(pattern: rx)) ?? (try! NSRegularExpression(pattern: "^\(\)$"))
+        return (try? NSRegularExpression(pattern: rx)) ?? (try! NSRegularExpression(pattern: ".*"))
     }
 
     /// v3.1.33: iOS 原生 free 命令——内存
