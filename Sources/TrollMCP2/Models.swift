@@ -1868,8 +1868,29 @@ final class ConversationStore: ObservableObject {
     }
 
     private func applyLoaded(_ decoded: [ChatConversation]) {
-        conversations = decoded.sorted { $0.updatedAt > $1.updatedAt }
+        // v6.2.2：修复"闪退后会话卡在工具执行中"——工具 running 占位卡随请求持久化，
+        // 若工具执行中 App 闪退/被杀，恢复会话时 isRunning=true 永远悬挂（UI 显示"执行中"却无停止按钮）。
+        // 恢复时把所有悬挂的 running 工具卡标记为中断态，避免误导。
+        var cleaned = decoded
+        for ci in cleaned.indices where ci < cleaned.count {
+            for mi in cleaned[ci].messages.indices {
+                if cleaned[ci].messages[mi].isRunning {
+                    cleaned[ci].messages[mi].isRunning = false
+                    cleaned[ci].messages[mi].isError = true
+                    if cleaned[ci].messages[mi].content.isEmpty {
+                        cleaned[ci].messages[mi].content = "工具执行已中断（App 在运行中被终止）"
+                    }
+                }
+            }
+        }
+        conversations = cleaned.sorted { $0.updatedAt > $1.updatedAt }
         selectedId = conversations.first?.id
+        // 若有悬挂工具卡被纠正，落盘一次保持持久一致
+        var needSave = false
+        for conv in decoded {
+            if conv.messages.contains(where: { $0.isRunning }) { needSave = true; break }
+        }
+        if needSave { save() }
     }
 
     private func load() {

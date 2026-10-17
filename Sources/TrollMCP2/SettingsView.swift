@@ -42,6 +42,8 @@ struct SettingsView: View {
     @State private var mirrorsText = ""
     // v4.5.1：桌面悬浮开关结果刷新触发器（HUDManager.lastStartError 非 @Published，用它触发 body 重建显示原因）
     @State private var hudRefresh = false
+    // v6.2.1：重置所有数据确认弹窗
+    @State private var showResetAlert = false
 
     var body: some View {
         // v2.9.247：GeometryReader 拿真实全屏尺寸——fullScreenCover+NavigationStack 组合下 List 高度被解析为内容高度(内容不满一屏时列表只占上半屏、下半空白),外层 frame 也无效;改用几何尺寸显式强制 List 与 NavigationStack 铺满全屏,所有机型一致
@@ -246,6 +248,10 @@ struct SettingsView: View {
                          subtitle: "闪退现场 · 异常堆栈 · 一键清空 · 发给开发者调试",
                          icon: "exclamationmark.triangle", color: .red,
                          destination: AnyView(CrashLogView())),
+            SettingsItem(title: "重置所有数据",
+                         subtitle: "清空配置 · 会话 · 工作区 · Keychain · 崩溃日志（恢复到全新安装）",
+                         icon: "arrow.counterclockwise.circle.fill", color: .red,
+                         action: { showResetAlert = true }),
             SettingsItem(title: L10n.t("row_workspace"),
                          subtitle: "点开浏览目录 · 预览 · 复制路径 · 分享",
                          icon: "folder", color: .blue,
@@ -322,6 +328,15 @@ struct SettingsView: View {
             Button("好", role: .cancel) { vpnToggleError = "" }
         } message: {
             Text(vpnToggleError)
+        }
+        // v6.2.1：重置所有数据——清空 UserDefaults 域 + Workspace + Keychain + 崩溃日志
+        .alert("重置所有数据", isPresented: $showResetAlert) {
+            Button("取消", role: .cancel) {}
+            Button("确认重置", role: .destructive) {
+                resetAllData()
+            }
+        } message: {
+            Text("将清空：模型配置、API Key、会话记录、工作区文件、知识库、崩溃日志。此操作不可撤销！")
         }
         // v4.3.30：更新镜像源编辑（GitHub 被墙时的备用通道，每行一个前缀，逗号分隔）
         .sheet(isPresented: $showMirrorEditor) {
@@ -476,6 +491,37 @@ struct SettingsView: View {
     // v3.3.2：抓包 VPN 开关副标题
     private func vpnActiveSubtitle() -> String {
         VpnManager.shared.vpnActive ? "运行中 · 点击右侧开关关闭" : "未运行 · 点击右侧开关开启"
+    }
+
+    /// v6.2.1：重置所有数据——恢复"全新安装"状态。
+    /// 覆盖安装 (TrollStore 导入 tipa) 时 iOS 保留沙盒数据是标准行为，
+    /// 用户若要彻底清空，从这里一键执行。清空范围：
+    /// UserDefaults 域 / Workspace 目录(会话·知识库·项目·崩溃日志) / Keychain 全部项。
+    private func resetAllData() {
+        // 1. UserDefaults 本 App 域
+        if let domain = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+        }
+        UserDefaults.standard.synchronize()
+
+        // 2. Workspace 目录（会话 conversations.json / 知识库 / 项目 / 崩溃日志 / shell-diag）
+        try? FileManager.default.removeItem(at: Workspace.root)
+
+        // 3. Keychain 全部项（本 App service 下的 token/apiKey）
+        KeychainStore.shared.clearAll()
+
+        // 4. 提示用户重启 App 让所有单例重建（数据已清空，内存中旧状态仅本次会话残留）
+        let alert = UIAlertController(title: "已重置", message: "所有数据已清空。请完全退出 App 后重新打开，以加载全新状态。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "好", style: .default) { _ in
+            DispatchQueue.main.async {
+                presentationMode.wrappedValue.dismiss()
+            }
+        })
+        if let vc = ShareCenter.topViewController(), let view = vc.view {
+            alert.popoverPresentationController?.sourceView = view
+            alert.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY, width: 1, height: 1)
+            vc.present(alert, animated: true)
+        }
     }
 }
 

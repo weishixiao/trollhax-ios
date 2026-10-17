@@ -15,6 +15,11 @@ enum CrashCatcher {
     private static var sigMsgBuf: UnsafeMutablePointer<CChar>?
     private static let sigPathCap = 1024
     private static let sigMsgCap = 128
+    /// v6.2.2：backtrace 帧缓冲也预分配——旧版在信号处理器内每次 allocate，
+    /// 而 malloc 非 async-signal-safe，崩溃现场堆已损坏时 allocate 可能二次段错误，
+    /// 导致日志只写了一半/为空（实测"最新的三次日志全部为空"）。
+    private static let sigFrameCap = 64
+    private static var sigFramesBuf: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
     // v2.9.172：crash 目录的 C 字符串路径在 install() 正常上下文一次性固化。
     // 旧版 handler 里 `crashDir.path` 每次访问都重新计算 URL（Swift/ObjC runtime），
     // 在信号上下文二次崩溃，导致 4 次 Segfault 全部只记录到 writeSignal 自身、
@@ -30,6 +35,10 @@ enum CrashCatcher {
         crashDirC = c
         if sigPathBuf == nil { sigPathBuf = .allocate(capacity: sigPathCap) }
         if sigMsgBuf == nil { sigMsgBuf = .allocate(capacity: sigMsgCap) }
+        if sigFramesBuf == nil {
+            sigFramesBuf = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: sigFrameCap)
+            sigFramesBuf?.initialize(repeating: nil, count: sigFrameCap)
+        }
 
         // 1) ObjC 未捕获异常（Swift fatalError / 强解包 / 数组越界等走这里）
         NSSetUncaughtExceptionHandler { exception in
@@ -100,10 +109,13 @@ enum CrashCatcher {
         strcpy(m, "\n")
         _ = write(fd, mb, strlen(mb))
         // backtrace/backtrace_symbols_fd 均为 async-signal-safe
-        let frames = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: 64)
-        let n = backtrace(frames, 64)
+        // v6.2.2：用预分配帧缓冲（避免信号上下文 malloc 二次崩溃）
+        guard let frames = sigFramesBuf else {
+            close(fd)
+            return
+        }
+        let n = backtrace(frames, sigFrameCap)
         backtrace_symbols_fd(frames, n, fd)
-        frames.deallocate()
         close(fd)
         // 恢复默认处理并重发，让系统也生成官方崩溃报告
         signal(s, SIG_DFL)

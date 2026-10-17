@@ -75,6 +75,10 @@ final class OpenAIClient {
     /// v6.2.0：429 限流退避重试计数 (参考 OpenMinis 的限流处理)——tpm_exceeded/rate_limit
     /// 是每分钟 token 限额，稍等可恢复，不应直接判死；最多退避重试 2 次。
     private var rateLimitRetries = 0
+    /// v6.2.2：L0-L4 chat/completions 流式化——已对该 level 尝试过流式的记录。
+    /// 流式失败(不支持SSE/参数被拒等)时加入集合并退回该 level 的非流式原逻辑；
+    /// 非流式再失败则按原降级链 nextLevel，新 level 又可再试流式。
+    private var streamTriedLevels: Set<Int> = []
     private var currentCompatLevel: Int;  // v6.0.30: 内存里的兼容级别，避免反复试探死循环
     /// v2.9.87：多级降级总预算——全链串行最坏 7 分钟+，用户感知"一直请求中"。
     /// v2.9.96：试探级 (L0-L4）超时已压到 25s，预算放宽到 220s 给 L5 流式留足时间。
@@ -192,6 +196,9 @@ final class OpenAIClient {
         overallDeadline = Date().addingTimeInterval(overallBudget)
         // v4.3.36：每轮请求重置思考自动升档标志 (防止跨请求残留）
         didAutoEscalateReasoning = false
+        // v6.2.2：每轮新请求重置流式尝试记录——首轮走流式成功后，后续回合应继续流式
+        streamTriedLevels = []
+        rateLimitRetries = 0
         // v2.9.107：熔断检查 (对齐 cc-switch circuit_breaker）——供应商连续failed过多时直接拒绝，
         // 不再傻等超时 (用户痛点"一直请求中"）
         let gate = ModelStore.shared.breaker(for: config.id).allowRequest()
@@ -333,6 +340,31 @@ final class OpenAIClient {
             onStatus?("正在等待模型响应…")
         } else {
             onStatus?("请求被拒绝，正在尝试简化参数 (级别 \(level)/\(maxLevel))…")
+        }
+
+        // v6.2.2：L0-L4 chat/completions 流式优先——该 level 首次进入且非试探请求时走 SSE，
+        // 逐字显示实现"对话流畅"；流式失败(首字节超时/不支持SSE/参数被拒)自动回落下方非流式 dataTask
+        // (streamTriedLevels 记入当前 level，重走 attempt 时直接走非流式，避免死循环)。
+        if level < maxLevel, !streamTriedLevels.contains(level), !isTrialRequest {
+            streamTriedLevels.insert(level)
+            NetworkLog.shared.log("\(config.name) L\(level) 走 chat/completions 流式 (首次)")
+            onStatus?("正在流式请求…")
+            let streamMsgs = isTrialRequest ? trialMessages : messages
+            let streamTools = isTrialRequest ? nil : tools
+            self.performChatCompletionsStream(level: level, messages: streamMsgs, tools: streamTools,
+                                              onStatus: onStatus, onDelta: onDelta, onThinking: onThinking) { [weak self] result in
+                guard let self = self else { return }
+                switch result {
+                case .success(let r):
+                    completion(.success(r))
+                case .failure(let err):
+                    NetworkLog.shared.log("\(self.config.name) L\(level) 流式失败 (\((err as NSError).code))，回落非流式")
+                    self.attempt(level: level, isFirst: isFirst, messages: messages, tools: tools,
+                                 onStatus: onStatus, onDelta: onDelta, onThinking: onThinking,
+                                 avoidL5: avoidL5, completion: completion)
+                }
+            }
+            return
         }
 
         let task = session.dataTask(with: request) { data, response, error in
@@ -1522,6 +1554,170 @@ final class OpenAIClient {
                 }
                 guardedCompletion(.success(.text(fullText, thinking: th.isEmpty ? nil : th)))
             }
+        }
+
+        let task = streamSession.dataTask(with: request)
+        activeTask = task
+        task.resume()
+    }
+
+    /// v6.2.2：L0-L4 chat/completions 流式执行器——`stream: true` + SSE 解析。
+    /// 逐字显示 (onDelta)，思考流实时上屏 (onThinking)，工具轮增量累积 (delta.tool_calls)。
+    /// 首字节 10s 未到自动降级非流式（由调用方 attempt() 捕获失败后重走 dataTask 路径）。
+    private func performChatCompletionsStream(level: Int, messages: [ChatMessage], tools: [[String: Any]]?,
+                                              onStatus: ((String) -> Void)?,
+                                              onDelta: ((String) -> Void)?,
+                                              onThinking: ((String) -> Void)? = nil,
+                                              completion: @escaping (Result<ChatResult, Error>) -> Void) {
+        let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: base + "/chat/completions") else {
+            completion(.failure(NSError(domain: "OpenAIClient", code: 0, userInfo: [NSLocalizedDescriptionKey: "无效的 baseURL"])))
+            return
+        }
+
+        var request = URLRequest(url: url, timeoutInterval: 90)
+        setHTTPMethod("POST", on: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        applyAuth(to: &request)
+
+        var body = buildBody(level: level, messages: messages, tools: tools)
+        body["stream"] = true
+        injectBodyAuth(into: &body)
+        applyParamAliases(into: &body)
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        onStatus?("正在流式请求 (chat/completions)…")
+
+        // 累积状态
+        var fullText = ""
+        var fullThinking = ""
+        var toolCalls: [ToolCall] = []
+        var toolCallAcc: [Int: (id: String, name: String, args: String)] = [:]  // index → 累积
+        var orderedIndices: [Int] = []
+        var firstByteReceived = false
+        var fellBackToNonStream = false
+        var sawDone = false
+
+        let completionLock = NSLock()
+        var completionCalled = false
+        let guardedCompletion: (Result<ChatResult, Error>) -> Void = { r in
+            completionLock.lock()
+            if completionCalled { completionLock.unlock(); return }
+            completionCalled = true
+            completionLock.unlock()
+            completion(r)
+        }
+
+        let delegate = SSEStreamDelegate()
+        let streamSession = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+
+        // 首字节超时降级 (10s)——中转站可能不支持 SSE
+        let firstByteTimer = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            if !firstByteReceived && !fellBackToNonStream {
+                fellBackToNonStream = true
+                NetworkLog.shared.log("\(self.config.name): chat 流式首字节超时 (10s)，降级非流式")
+                streamSession.invalidateAndCancel()
+                guardedCompletion(.failure(NSError(domain: "OpenAIClient", code: -3040,
+                    userInfo: [NSLocalizedDescriptionKey: "SSE first byte timeout"])))
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: firstByteTimer)
+
+        delegate.onEvent = { [weak self] raw in
+            guard let self = self else { return }
+            if !firstByteReceived {
+                firstByteReceived = true
+                firstByteTimer.cancel()
+                let el = Int(Date().timeIntervalSince(self.requestStart) * 1000)
+                NetworkLog.shared.log("\(self.config.name): chat 流式首字节 (\(el)ms)")
+                onStatus?("已连接 · 首字节 \(String(format: "%.1f", Double(el) / 1000.0))s，开始接收…")
+            }
+            if fellBackToNonStream || sawDone { return }
+            // [DONE] 结束标记
+            if raw.contains("[DONE]") {
+                sawDone = true
+                return
+            }
+            // chat/completions chunk: {"choices":[{"delta":{...},"finish_reason":null}]}
+            guard let dataStr = raw.components(separatedBy: "data:").last?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                let json = try? JSONSerialization.jsonObject(with: Data(dataStr.utf8)) as? [String: Any],
+                let choices = json["choices"] as? [[String: Any]],
+                let first = choices.first,
+                let delta = first["delta"] as? [String: Any] else { return }
+
+            // 文本增量（OpenAI 用 content；DeepSeek/Qwen 推理用 reasoning_content）
+            if let c = delta["content"] as? String, !c.isEmpty {
+                fullText += c
+                DispatchQueue.main.async { onDelta?(c) }
+            }
+            if let r = delta["reasoning_content"] as? String, !r.isEmpty {
+                fullThinking += r
+                let d = r
+                DispatchQueue.main.async { onThinking?(d) }
+            }
+            // 工具调用增量（delta.tool_calls 按 index 累积 id/name/arguments）
+            if let tcs = delta["tool_calls"] as? [[String: Any]] {
+                for tc in tcs {
+                    let index = tc["index"] as? Int ?? 0
+                    var acc = toolCallAcc[index] ?? (id: "", name: "", args: "")
+                    if let id = tc["id"] as? String, !id.isEmpty { acc.id = id }
+                    if let fn = tc["function"] as? [String: Any] {
+                        if let n = fn["name"] as? String, !n.isEmpty { acc.name = n }
+                        if let a = fn["arguments"] as? String, !a.isEmpty { acc.args += a }
+                    }
+                    if toolCallAcc[index] == nil { orderedIndices.append(index) }
+                    toolCallAcc[index] = acc
+                }
+            }
+            // finish_reason 到达 = 本轮完成
+            if let fr = first["finish_reason"] as? String, fr == "stop" || fr == "tool_calls" {
+                sawDone = true
+            }
+        }
+
+        delegate.onComplete = { [weak self] error in
+            guard let self = self else { return }
+            firstByteTimer.cancel()
+            streamSession.invalidateAndCancel()
+            if fellBackToNonStream { return }
+
+            if let error = error {
+                guardedCompletion(.failure(error))
+                return
+            }
+            // v6.2.2：无任何内容兜底——SSE 流但未收到 content/thinking/tool_calls（如 HTTP 429
+            // 返回的是 JSON error 而非 SSE 事件）时，判失败回落非流式路径（那里有 429 退避/错误解析）。
+            if fullText.isEmpty && fullThinking.isEmpty && toolCallAcc.isEmpty {
+                NetworkLog.shared.log("\(self.config.name): chat 流式无内容，回落非流式")
+                guardedCompletion(.failure(NSError(domain: "OpenAIClient", code: -3041,
+                    userInfo: [NSLocalizedDescriptionKey: "SSE empty response"])))
+                return
+            }
+            // 工具轮：按 index 顺序组装
+            for index in orderedIndices {
+                if let acc = toolCallAcc[index], !acc.id.isEmpty {
+                    toolCalls.append(ToolCall(id: acc.id, name: acc.name, arguments: acc.args))
+                }
+            }
+            if !toolCalls.isEmpty {
+                let th = fullThinking.trimmingCharacters(in: .whitespacesAndNewlines)
+                let n = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.persist(level: level)
+                guardedCompletion(.success(.toolCalls(toolCalls, thinking: th.isEmpty ? nil : th,
+                                                      content: n.isEmpty ? nil : n)))
+                return
+            }
+            // 纯文本轮
+            var th = fullThinking.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !th.isEmpty, !trimmed.isEmpty, th.contains(trimmed) || trimmed.contains(th) {
+                th = ""  // 思考与正文重复时不展示
+            }
+            self.persist(level: level)
+            guardedCompletion(.success(.text(fullText, thinking: th.isEmpty ? nil : th)))
         }
 
         let task = streamSession.dataTask(with: request)

@@ -78,4 +78,15 @@ final class KeychainStore {
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
+
+    /// v6.2.1：清空本 service 下全部 Keychain 项（"重置所有数据"用）
+    @discardableResult
+    func clearAll() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
 }

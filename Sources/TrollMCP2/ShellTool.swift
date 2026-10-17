@@ -71,16 +71,24 @@ final class ShellExecTool: MCPTool {
         // 提前拦截给明确报错，避免 App 直接闪退（体验优于崩溃）。
         // v4.4.4：原生 ARM64 Python 已集成（python3 首词 → 原生路由，能跑 numpy/openblas），
         // 因此只拦 iSH 路径（sh -c 包装等），原生 python3 放行。
+        // v6.2.0：扩展危险库清单——openblas/avx 指令族在 iSH arm64 模拟器都会段错误，
+        // 实测除 numpy/pandas/matplotlib 外 scipy/sklearn/torch/tensorflow/cv2 等同样触发。
         let cmdFirstWord = command.trimmingCharacters(in: .whitespaces)
             .split(separator: " ").first.map(String.init) ?? ""
         let nativePython = (cmdFirstWord == "python3" || cmdFirstWord == "python")
-        if !nativePython && (command.contains("import pandas") || command.contains("import numpy")
-            || command.contains("import matplotlib")) {
-            return [
-                "error": "iSH numpy/pandas 段错误防护",
-                "command": command,
-                "hint": "iSH 模拟器运行 numpy/openblas 会段错误闪退（实测崩溃栈 cpu_run_to_interrupt），禁止在 iSH 内 import pandas/numpy/matplotlib。数据分析请用原生 python3（App 内置，iPhone 芯片直跑）：python3 -c \"import pandas...\" 走原生路由即可。"
-            ]
+        let ishDangerousImports = ["import pandas", "import numpy", "import matplotlib",
+                                    "import scipy", "from scipy", "import sklearn", "from sklearn",
+                                    "import torch", "import tensorflow", "import cv2", "import opencv",
+                                    "import openblas", "import statsmodels"]
+        if !nativePython {
+            let hit = ishDangerousImports.first { command.contains($0) }
+            if let hit = hit {
+                return [
+                    "error": "iSH 段错误防护",
+                    "command": command,
+                    "hint": "iSH 模拟器在 arm64 上执行 openblas/AVX 类指令会段错误闪退（实测崩溃栈 cpu_run_to_interrupt），\(hit) 已被拦截。数据分析请用原生 python3（App 内置，iPhone 芯片直跑）：python3 -c \"import pandas...\" 走原生路由即可。"
+                ]
+            }
         }
         
         // 重置工作目录
@@ -867,7 +875,7 @@ final class ShellExecTool: MCPTool {
         "ls", "cat", "find", "grep", "echo", "mkdir", "rm", "mv", "cp",
         "tail", "head", "sed", "pwd", "cd", "touch", "wc", "md5sum",
         "sha256sum", "diff", "hexdump", "curl", "wget", "plutil", "sqlite3",
-        "unzip", "df", "free", "uname", "uptime", "hostname", "ps", "top",
+        "unzip", "df", "free", "uname", "sw_vers", "uptime", "hostname", "ps", "top",
         "kill", "ifconfig", "netstat", "nslookup", "tar", "gzip", "gunzip",
         "ta", "base64", "strings", "nm", "kfd_diag", "python3", "objdump", "class-dump",
         // fix3q: 内置原生工具链（native-tools 交叉编译进 App bin/）——AI 直接调用走原生 ARM64
@@ -932,6 +940,7 @@ final class ShellExecTool: MCPTool {
         case "df": return runIOSDf(iosCmd)
         case "free": return runIOSFree(iosCmd)
         case "uname": return runIOSUname(iosCmd)
+        case "sw_vers": return runIOSSwVers(iosCmd)
         case "uptime": return runIOSUptime(iosCmd)
         case "hostname": return runIOSHostname(iosCmd)
         case "ps": return runIOSPs(iosCmd)
@@ -3801,6 +3810,27 @@ final class ShellExecTool: MCPTool {
         }
         
         return ["command": command, "exit_code": 0, "stdout": output, "ios_native": true]
+    }
+
+    /// v6.2.0: iOS 原生 sw_vers 命令——AI 采集系统信息时惯用 (macOS/Linux 习惯)，
+    /// 若无实现会掉进 iSH 引擎执行 → 段错误闪退 (实测崩溃栈 cpu_run_to_interrupt)。
+    /// 输出 iOS 版本信息，避免走 iSH。
+    private static func runIOSSwVers(_ command: String) -> [String: Any] {
+        let device = UIDevice.current
+        var lines: [String] = []
+        if command.contains("-a") || command.contains("ProductVersion") {
+            lines.append("ProductName: iOS")
+            lines.append("ProductVersion: \(device.systemVersion)")
+        } else if command.contains("ProductName") {
+            lines.append("iOS")
+        } else if command.contains("BuildVersion") {
+            lines.append(ProcessInfo.processInfo.operatingSystemVersionString)
+        } else {
+            lines.append("ProductName: iOS")
+            lines.append("ProductVersion: \(device.systemVersion)")
+            lines.append("BuildVersion: \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        }
+        return ["command": command, "exit_code": 0, "stdout": lines.joined(separator: "\n"), "ios_native": true]
     }
     
     /// v3.1.33: iOS 原生 uptime 命令——运行时间
