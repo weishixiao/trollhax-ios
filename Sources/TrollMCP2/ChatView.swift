@@ -1623,7 +1623,10 @@ struct MessageBubble: View {
             ? String(shown.prefix(50000)) + "\n\n…[内容过长，仅渲染前 5 万字；完整内容见会话数据]"
             : shown
         if isStreaming || forceType || isUser {
-            Text(isUser ? AttributedString(capped) : coloredBody(capped))
+            // v6.4.0（对齐 OpenMinis：流式期间用廉价渲染，完成后才上富文本）：
+            // 旧实现在每个 delta 都跑 coloredBody（正则解析代码段/加粗）→ 长输出卡顿。
+            // 流式期间直接 Text(纯文本)，完成后再走 attributed/SelectableText 富文本路径。
+            Text(isUser ? AttributedString(capped) : AttributedString(capped))
                 .font(.system(size: 16.5))
                 .textSelection(.enabled)
         } else {

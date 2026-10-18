@@ -1447,6 +1447,17 @@ final class OpenAIClient {
             if fellBackToNonStream { return }
 
             if let error = error {
+                // v6.4.0：断流保底——已收到部分正文/思考时，不判失败（否则上层重试会从零重来、
+                // 用户已看到的内容被丢弃/闪烁）。改为把已输出内容作为成功返回并标注中断。
+                if !fullText.isEmpty || !fullThinking.isEmpty {
+                    let th = fullThinking.trimmingCharacters(in: .whitespacesAndNewlines)
+                    var text = fullText
+                    text += "\n\n[⚠️ 流式连接中断，以上为已接收内容；可发送「继续」让模型接着写]"
+                    NetworkLog.shared.log("\(self.config.name): 流式中断但保留已输出 \(fullText.count) 字")
+                    self.persist(level: level)
+                    guardedCompletion(.success(.text(text, thinking: th.isEmpty ? nil : th)))
+                    return
+                }
                 guardedCompletion(.failure(error))
                 return
             }

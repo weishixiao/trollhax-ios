@@ -693,7 +693,10 @@ final class ConversationStore: ObservableObject {
     private func scheduleStreamFlush() {
         guard !streamFlushScheduled else { return }
         streamFlushScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+        // v6.4.0（对齐 OpenMinis tiered flush throttle）：0.08s → 0.18s。
+        // 每批"滑过"而不是高频重绘；结构化输出（含换行）走快速通道 0.05s 保证可读节奏。
+        let delay: Double = streamDeltaBuffer.contains("\n") ? 0.05 : 0.18
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.flushStreamBuffers()
         }
     }
@@ -1155,8 +1158,16 @@ final class ConversationStore: ObservableObject {
                     TaskNotify.shared.endBackground()
                     TaskNotify.shared.notifyIfBackground(title: "✅ AI 已回复", body: String(text.prefix(60)))
                     if let sid = self.streamingMessageId {
-                        // 流式已显示，更新最终文本 + thinking
-                        self.updateMessageContent(id: sid, content: text)
+                        // v6.4.0：绝不因"最终文本为空/更短"丢失已流式输出（用户反馈"丢失输出会话"）。
+                        // 旧实现直接用最终 text 覆盖流式内容——文本为空或 provider 只回摘要时，
+                        // 用户已看到的内容被抹掉。改为取更完整的一方（合并而非覆盖）。
+                        var merged = text
+                        if let ci = self.activeConvIndex,
+                           let mi = self.conversations[ci].messages.firstIndex(where: { $0.id == sid }) {
+                            let streamed = self.conversations[ci].messages[mi].content
+                            if streamed.count > merged.count { merged = streamed }
+                        }
+                        self.updateMessageContent(id: sid, content: merged)
                         if let idx = self.activeConvIndex,
                            let mi = self.conversations[idx].messages.firstIndex(where: { $0.id == sid }),
                            let th = thinking, !th.isEmpty {
