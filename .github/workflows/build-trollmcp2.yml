@@ -39,6 +39,37 @@ jobs:
       # v6.3.6 备注：Alpine 官方 busybox 是 ELF，iOS 内核拒绝执行（只认 Mach-O），
       # 故原生 busybox 方案不成立，已移除该下载步骤。ShellTool 侧保留 Mach-O 校验，
       # 将来若提供 iOS 交叉编译的 Mach-O busybox/toybox 可直接启用。
+      # v6.3.7: libarchive + bsdtar（用 iOS SDK 交叉编译成 Mach-O）——tar/zip/gz 原生
+      # 解包打包，替代必须走 x86 模拟 Alpine 的老路（iSH 段错误 = 闪退主因）。
+      # continue-on-error：编译失败不影响出包（仅不捆绑 bsdtar，代码侧自动回退）。
+      - name: Build libarchive + bsdtar (iOS arm64)
+        continue-on-error: true
+        run: |
+          mkdir -p native-tools-out
+          cd /tmp
+          curl -sL -o la.tar.gz https://github.com/libarchive/libarchive/releases/download/v3.7.7/libarchive-3.7.7.tar.gz
+          tar -xzf la.tar.gz
+          cd libarchive-3.7.7
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          export CC="xcrun -sdk iphoneos clang -arch arm64 -isysroot $SDK -mios-version-min=15.0"
+          export CFLAGS="-O2 -arch arm64 -isysroot $SDK -mios-version-min=15.0"
+          export LDFLAGS="-arch arm64 -isysroot $SDK -mios-version-min=15.0"
+          ./configure --host=aarch64-apple-darwin --enable-bsdtar --disable-bsdcpio \
+            --without-bz2lib --without-lzma --without-lzo2 --without-lz4 --without-zstd \
+            --without-openssl --without-xml2 --without-expat --disable-acl --disable-xattr \
+            --disable-shared --enable-static > /tmp/la_conf.log 2>&1 || tail -25 /tmp/la_conf.log
+          make -j4 > /tmp/la_make.log 2>&1 || tail -30 /tmp/la_make.log
+          BIN=$(find . -type f -name 'bsdtar' | head -1)
+          echo ">>> bsdtar bin: $BIN"
+          if [ -n "$BIN" ]; then
+            cp "$BIN" "$GITHUB_WORKSPACE/native-tools-out/bsdtar"
+            chmod +x "$GITHUB_WORKSPACE/native-tools-out/bsdtar"
+            file "$GITHUB_WORKSPACE/native-tools-out/bsdtar" || true
+            ls -la "$GITHUB_WORKSPACE/native-tools-out/bsdtar"
+          else
+            echo ">>> bsdtar 未产出（见 /tmp/la_conf.log / la_make.log）"
+          fi
+
       - name: Build lua 5.4 (iOS arm64)
         if: steps.tools-cache.outputs.cache-hit != 'true'
         run: |
@@ -367,7 +398,7 @@ jobs:
     needs: [native-tools, native-python, native-wheels, native-nmap, native-llvm]
     runs-on: macos-latest
     env:
-      RELEASE_VERSION: 6.3.6
+      RELEASE_VERSION: 6.3.7
     steps:
       - uses: actions/checkout@v4
 

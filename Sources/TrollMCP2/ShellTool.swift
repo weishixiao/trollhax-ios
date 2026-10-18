@@ -169,6 +169,13 @@ final class ShellExecTool: MCPTool {
             // 100% 是 iSH(x86 模拟器) 在 arm64 上段错误——cpu_run_to_interrupt +1204 /
             // poll_wakeup +48 / err_map +180 等，均在后台引擎线程。日常用原生命令即可，
             // 需要 apk/git/完整 tar 时在 设置→安全 手动开启。
+            // v6.3.7：tar/unzip/zip 优先走原生 bsdtar（libarchive 交叉编译成 Mach-O，
+            // CI 产出 bin/bsdtar）——解包/打包不再需要 Alpine，物理上不闪退。
+            if !forceAlpine,
+               let btResult = ShellExecTool.runViaNativeBsdtar(trimmed, limit: outLimit, timeout: timeout) {
+                AuditLog.shared.log("shell.exec (native bsdtar)", detail: String(trimmed.prefix(100)))
+                return btResult
+            }
             // v6.3.5：优先用原生 arm64 busybox 执行（无 x86 模拟 → 不闪退）。
             // busybox 静态单文件内置 sh/tar/gzip/unzip/wget/awk/sed/grep/find/du/sort 等，
             // 与 App 同沙盒同权限；apk/pip 必须真实 Alpine，不走此路。
@@ -752,6 +759,68 @@ final class ShellExecTool: MCPTool {
     /// v6.0.28: 修复假零结果——增加 autoBind 范围检查：路径在 iOS 存在但不在 autoBind 范围内，
     /// 直接拦截报错（原来放行导致 Alpine 读不到文件返回空，AI 误判为 0 字节）。
     /// 复用与 autoBridge 同一套 iOS 路径识别正则，保证护栏与桥接兜底判定一致。
+
+    /// v6.3.7：原生解包/打包——libarchive 的 bsdtar（CI 用 iOS SDK 交叉编译成 Mach-O，
+    /// 见 workflow "Build libarchive + bsdtar"）。tar/zip/gz 全原生，不经过 x86 模拟器。
+    /// 返回 nil 表示不适用/不可用（上层继续走 busybox 或 iSH 门控）。
+    static func runViaNativeBsdtar(_ command: String, limit: Int, timeout: TimeInterval) -> [String: Any]? {
+        let bt = Bundle.main.bundlePath + "/bin/bsdtar"
+        guard FileManager.default.isExecutableFile(atPath: bt) else { return nil }
+        // Mach-O 校验（iOS 只执行 Mach-O）
+        guard let fh = FileHandle(forReadingAtPath: bt) else { return nil }
+        let head = fh.readData(ofLength: 4)
+        fh.closeFile()
+        guard head.count == 4 else { return nil }
+        let le = head.withUnsafeBytes { $0.load(as: UInt32.self) }
+        let be = head.withUnsafeBytes { $0.load(as: UInt32.self).byteSwapped }
+        guard le == 0xfeedfacf || be == 0xfeedface || be == 0xcafebabe else { return nil }
+
+        let parts = command.split(separator: " ").map(String.init)
+        guard let w = parts.first, ["tar", "unzip", "zip"].contains(w) else { return nil }
+        var args: [String] = []
+        switch w {
+        case "tar":
+            // tar 参数基本与 bsdtar 兼容（x/c/t + f 皆可），原样透传
+            args = Array(parts.dropFirst())
+        case "unzip":
+            var zip = "", dir = ""
+            var i = 1
+            while i < parts.count {
+                if parts[i] == "-d", i + 1 < parts.count { dir = parts[i + 1]; i += 2; continue }
+                if !parts[i].hasPrefix("-"), zip.isEmpty { zip = parts[i] }
+                i += 1
+            }
+            guard !zip.isEmpty else { return nil }
+            if !dir.isEmpty {
+                try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                args = ["xf", zip, "-C", dir]
+            } else {
+                args = ["xf", zip]
+            }
+        case "zip":
+            let rest = Array(parts.dropFirst()).filter { $0 != "-r" }
+            guard rest.count >= 2 else { return nil }
+            args = ["cf"] + rest
+        default:
+            return nil
+        }
+        let binDir = Bundle.main.bundlePath + "/bin"
+        let res = BuildRunner.shared.run(executable: bt, args: args,
+                                         env: ["PATH": binDir + ":/usr/bin:/bin",
+                                               "HOME": NSHomeDirectory()],
+                                         timeout: timeout)
+        var out = res.stdout
+        if !res.stderr.isEmpty { out += (out.isEmpty ? "" : "\n") + res.stderr }
+        if res.timedOut { out += "\n[执行超时 \(Int(timeout))s 被终止]" }
+        if res.spawnError != nil || res.exitCode == -1 { return nil }
+        if limit > 0 && out.count > limit {
+            let spill = ToolRegistry.spillLarge("bsdtar", out)
+            out = String(out.prefix(limit / 2)) + "\n…[输出太长，完整: \(spill)]…\n" + String(out.suffix(limit / 2))
+        }
+        return ["command": command, "exit_code": res.exitCode, "stdout": out,
+                "ios_native": true, "runtime_actual": "native-bsdtar",
+                "hint": "原生 bsdtar（libarchive）执行：tar/zip 解包打包，无 x86 模拟不闪退。gz 单文件解压用 tar 亦可自动识别。"]
+    }
 
     /// v6.3.5：原生 Alpine 替代——用 arm64 原生 busybox 执行 shell 命令，彻底绕开
     /// x86 模拟器（iSH 段错误 = 用户 11 次闪退的唯一主因）。busybox 自带 sh/tar/gzip/
