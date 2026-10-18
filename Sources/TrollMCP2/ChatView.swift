@@ -1163,14 +1163,9 @@ struct ChatModelPickerSheet: View {
     @Environment(\.dismiss) private var dismissSheet
     let onSelect: (ModelConfig) -> Void
 
-    // v6.3.1：按用户要求重做为"选择模型"面板（对齐其截图样式）：
-    // 顶部搜索框 + 已保存模型 + 上游中转站模型列表（读 /models），点选即切换。
+    // v6.3.2：按用户思路重构——"选择模型"面板列出已保存模型，点进去即进入该站详情页，
+    // 详情页自动获取该中转站的上游模型列表，点选某个模型就切换到它。
     @State private var search = ""
-    @State private var upstream: [String] = []
-    @State private var loadingUpstream = false
-    @State private var loadError: String?
-
-    private var current: ModelConfig? { modelStore.defaultConfig }
 
     private var filteredConfigs: [ModelConfig] {
         guard !search.isEmpty else { return modelStore.configs }
@@ -1178,15 +1173,10 @@ struct ChatModelPickerSheet: View {
             ($0.name + " " + $0.model + " " + $0.provider).localizedCaseInsensitiveContains(search)
         }
     }
-    private var filteredUpstream: [String] {
-        guard !search.isEmpty else { return upstream }
-        return upstream.filter { $0.localizedCaseInsensitiveContains(search) }
-    }
 
     var body: some View {
         NavigationView {
             List {
-                // 搜索框
                 Section {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass")
@@ -1203,44 +1193,41 @@ struct ChatModelPickerSheet: View {
                         }
                     }
                 }
-                // 已保存的配置
-                Section(header: Text("已保存的模型")) {
+                Section(header: Text("已保存的模型"),
+                        footer: Text("点某个模型 → 进入该站点，自动获取其上游模型列表，可直接切换")) {
                     ForEach(filteredConfigs) { cfg in
-                        pickerRow(name: cfg.name,
-                                  sub: "\(cfg.provider) · \(cfg.model)",
-                                  tags: ModelTags.tags(for: cfg.model),
-                                  selected: cfg.isDefault) {
-                            switchTo(cfg, model: nil)
-                        }
-                    }
-                }
-                // 上游模型（当前默认配置对应的中转站）
-                Section(header: HStack(spacing: 6) {
-                    Text("上游模型" + (current.map { " · \($0.name)" } ?? ""))
-                    Spacer()
-                    if loadingUpstream {
-                        ProgressView().scaleEffect(0.7)
-                    } else {
-                        Button { fetchUpstream() } label: {
-                            Image(systemName: "arrow.clockwise").font(.caption)
-                        }
-                        .disabled(current == nil)
-                    }
-                }) {
-                    if let e = loadError {
-                        Text(e).font(.caption).foregroundColor(.red).lineLimit(3)
-                    }
-                    if !loadingUpstream && upstream.isEmpty && loadError == nil {
-                        Text(current == nil ? "当前没有默认模型" : "点右上角刷新获取上游模型列表")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    ForEach(filteredUpstream, id: \.self) { m in
-                        pickerRow(name: m,
-                                  sub: current.map { $0.provider } ?? "",
-                                  tags: ModelTags.tags(for: m),
-                                  selected: current?.model == m) {
-                            switchTo(current, model: m)
+                        NavigationLink {
+                            UpstreamModelsView(config: cfg) { picked, model in
+                                switchTo(picked, model: model)
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: cfg.isDefault ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(cfg.isDefault ? .blue : Color(UIColor.tertiaryLabel))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(cfg.name)
+                                        .font(.body)
+                                        .foregroundColor(.primary)
+                                        .lineLimit(1)
+                                    HStack(spacing: 4) {
+                                        Text("\(cfg.provider) · \(cfg.model)")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                        ForEach(ModelTags.tags(for: cfg.model), id: \.self) { t in
+                                            Text(t)
+                                                .font(.system(size: 10, weight: .medium))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(Color(UIColor.secondarySystemFill))
+                                                .foregroundColor(.secondary)
+                                                .cornerRadius(4)
+                                        }
+                                    }
+                                }
+                                Spacer()
+                            }
                         }
                     }
                 }
@@ -1265,67 +1252,125 @@ struct ChatModelPickerSheet: View {
                     Button("完成") { dismissSheet() }
                 }
             }
-            .onAppear {
-                if upstream.isEmpty { fetchUpstream() }
-            }
         }
         .navigationViewStyle(.stack)
     }
 
-    @ViewBuilder
-    private func pickerRow(name: String, sub: String, tags: [String],
-                           selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20))
-                    .foregroundColor(selected ? .blue : Color(UIColor.tertiaryLabel))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(name)
-                        .font(.body)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    HStack(spacing: 4) {
-                        if !sub.isEmpty {
-                            Text(sub)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-                        ForEach(tags, id: \.self) { t in
-                            Text(t)
-                                .font(.system(size: 10, weight: .medium))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color(UIColor.secondarySystemFill))
-                                .foregroundColor(.secondary)
-                                .cornerRadius(4)
-                        }
-                    }
-                }
-                Spacer()
-            }
-        }
-    }
-
-    private func switchTo(_ cfg: ModelConfig?, model: String?) {
-        guard var c = cfg else { return }
+    private func switchTo(_ cfg: ModelConfig, model: String?) {
+        var c = cfg
         if let m = model { c.model = m }
         c.isDefault = true
         modelStore.update(c)
         onSelect(c)
         dismissSheet()
     }
+}
 
-    private func fetchUpstream() {
-        guard let cfg = current else { return }
-        loadingUpstream = true
+/// v6.3.2：某个已保存模型的详情页——进入即自动获取该中转站上游模型列表，
+/// 点选即切换到对应模型（同时支持"直接用该配置"）。
+struct UpstreamModelsView: View {
+    let config: ModelConfig
+    let onPick: (ModelConfig, String?) -> Void
+
+    @State private var models: [String] = []
+    @State private var loading = false
+    @State private var loadError: String?
+    @State private var search = ""
+
+    private var filtered: [String] {
+        guard !search.isEmpty else { return models }
+        return models.filter { $0.localizedCaseInsensitiveContains(search) }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Button { onPick(config, nil) } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: config.isDefault ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 20))
+                            .foregroundColor(config.isDefault ? .blue : Color(UIColor.tertiaryLabel))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("使用该配置")
+                                .foregroundColor(.primary)
+                            Text(config.model)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                }
+            }
+            Section(header: HStack(spacing: 6) {
+                Text("上游模型")
+                Spacer()
+                if loading {
+                    ProgressView().scaleEffect(0.7)
+                } else {
+                    Button { fetch() } label: {
+                        Image(systemName: "arrow.clockwise").font(.caption)
+                    }
+                }
+            }, footer: Text(config.baseURL).font(.caption2)) {
+                if let e = loadError {
+                    Text(e).font(.caption).foregroundColor(.red).lineLimit(3)
+                }
+                if !loading && models.isEmpty && loadError == nil {
+                    Text("未返回模型列表（该站可能不支持 /models）")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                ForEach(filtered, id: \.self) { m in
+                    Button { onPick(config, m) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: config.model == m ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 20))
+                                .foregroundColor(config.model == m ? .blue : Color(UIColor.tertiaryLabel))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(m)
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                if !ModelTags.tags(for: m).isEmpty {
+                                    HStack(spacing: 4) {
+                                        ForEach(ModelTags.tags(for: m), id: \.self) { t in
+                                            Text(t)
+                                                .font(.system(size: 10, weight: .medium))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(Color(UIColor.secondarySystemFill))
+                                                .foregroundColor(.secondary)
+                                                .cornerRadius(4)
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
+                }
+            }
+        }
+        .searchable(text: $search, prompt: "搜索模型")
+        .navigationTitle(config.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if models.isEmpty { fetch() }
+        }
+    }
+
+    private func fetch() {
+        loading = true
         loadError = nil
-        ModelAPIClient.shared.fetchModelList(config: cfg) { result in
-            loadingUpstream = false
+        ModelAPIClient.shared.fetchModelList(config: config) { result in
+            loading = false
             switch result {
-            case .success(let models): upstream = models
-            case .failure(let e): loadError = e
+            case .success(let list):
+                models = list
+                if list.isEmpty { loadError = nil }
+            case .failure(let e):
+                loadError = e
             }
         }
     }
