@@ -402,6 +402,14 @@ enum ISHEngine {
             return ("[iSH 已关闭·防闪退] Alpine/iSH 引擎未启用（实测在 arm64 上执行会段错误闪退）。\n原生替代：ls/cat/grep/find/du/plutil/sqlite3/strings/nm/hexdump/objdump/python3(内置原生)。\n需要 apk add / git / 完整 tar 时：设置 → 安全 → 开启「Alpine/iSH 引擎」后重试。",
                     127, false)
         }
+        // v6.3.9：进程隔离（默认开启，设置里可关）——命令交给 `-trollish` 子进程内执行，
+        // 引擎段错误只死子进程，主 App 不闪退（用户 11 次崩溃主因）。
+        // 子进程未起来时返回 nil → 回退下面的进程内执行，保证可用性。
+        if TrollishRunner.enabled, !TrollishRunner.isChild,
+           let iso = TrollishRunner.runIsolated(command, timeout: timeout) {
+            ShellDiag.log("ish exec (isolated child): \(command.prefix(80)) crashed=\(iso.crashed)")
+            return (iso.output, iso.exitCode, false)
+        }
         if case .booted = state {} else {
             if let e = ensureBooted() { return (e, -1, false) }
         }

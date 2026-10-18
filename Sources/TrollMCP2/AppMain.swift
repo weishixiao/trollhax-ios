@@ -18,6 +18,11 @@ struct TrollAgentApp {
             HUDExit()             // 关闭悬浮（读 pid 杀）
         } else if args.contains("-check") {
             exit(HUDCheck())      // 查悬浮存活（EXIT_FAILURE=存活 / EXIT_SUCCESS=未跑）
+        } else if args.contains("-trollish") {
+            // v6.3.9：iSH 引擎隔离子模式——主 App 用 posix_spawn 把自己以本模式拉起，
+            // 命令在子进程内跑引擎；引擎段错误只死子进程，主 App 存活（不闪退）。
+            // 复用主可执行 → 无需新构建目标/额外签名（同 -hud 双模式思路）。
+            TrollishRunner.runChildMode(args: args)   // 内部不返回
         } else {
             UIApplicationMain(
                 CommandLine.argc,
