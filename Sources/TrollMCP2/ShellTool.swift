@@ -165,6 +165,16 @@ final class ShellExecTool: MCPTool {
             if trimmed == "ta" || trimmed.hasPrefix("ta ") {
                 return OffloadRouter.run(trimmed)
             }
+            // v6.3.3：iSH 引擎默认关闭（防闪退）。依据：用户 11 条崩溃日志符号化后
+            // 100% 是 iSH(x86 模拟器) 在 arm64 上段错误——cpu_run_to_interrupt +1204 /
+            // poll_wakeup +48 / err_map +180 等，均在后台引擎线程。日常用原生命令即可，
+            // 需要 apk/git/完整 tar 时在 设置→安全 手动开启。
+            if !forceAlpine, !UserDefaults.standard.bool(forKey: "alpineEngineEnabled") {
+                return ["command": trimmed, "exit_code": 1, "ios_native": false,
+                        "runtime_actual": "ish_disabled",
+                        "stdout": "Alpine/iSH 引擎当前已关闭（防闪退模式）。原因：崩溃日志符号化显示 iSH(x86 模拟器)在此设备(arm64)执行时反复段错误（cpu_run_to_interrupt / poll_wakeup / err_map），是闪退主因。\n请改用 iOS 原生命令（直跑、不闪退）：\n• 列/读文件：ls / cat / stat\n• 查找：find <目录> [-name 模式] [-maxdepth N]\n• 大小：du -sh <目录> / du -sk <目录>\n• 文本：grep / head / tail / sed / wc\n• plist：plutil -extract <Key> raw -o - <文件>\n• 数据库：sqlite3 <db> \"SQL\"\n• 二进制：strings / nm / hexdump / objdump\n• Python：python3 -c \"...\"（App 内置原生 ARM64）\n确需 Alpine（apk add / git clone / 完整 tar 解包）时：设置 → 安全 → 开启「Alpine/iSH 引擎」后重试。",
+                        "hint": "iSH 已关闭（防闪退）。设置→安全 可临时开启。"]
+            }
             // v3.7.7: 自动 bind——Alpine 命令引用 iOS 路径时自动挂载顶层 + 改写路径，
             // 让 Alpine 直接读写 iOS 文件（消灭环境漂移，替代单向字节桥接）。
             // bind 后 iOS 路径不可见的旧约束不再成立。

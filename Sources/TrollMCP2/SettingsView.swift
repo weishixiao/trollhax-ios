@@ -248,6 +248,13 @@ struct SettingsView: View {
                          subtitle: "闪退现场 · 异常堆栈 · 一键清空 · 发给开发者调试",
                          icon: "exclamationmark.triangle", color: .red,
                          destination: AnyView(CrashLogView())),
+            // v6.3.3：Alpine/iSH 引擎开关（默认关闭）——11 条崩溃日志符号化后全部是
+            // iSH(x86 模拟器) 在 arm64 真机段错误（cpu_run_to_interrupt / poll_wakeup / err_map）。
+            SettingsItem(title: "Alpine/iSH 引擎",
+                         subtitle: "默认关闭（防闪退）· 开启后可用 apk/git/完整 tar 等 Linux 工具链（有闪退风险）",
+                         icon: "cpu", color: .gray,
+                         isOn: { UserDefaults.standard.bool(forKey: "alpineEngineEnabled") },
+                         onToggle: { UserDefaults.standard.set($0, forKey: "alpineEngineEnabled") }),
             SettingsItem(title: "重置所有数据",
                          subtitle: "清空配置 · 会话 · 工作区 · Keychain · 崩溃日志（恢复到全新安装）",
                          icon: "arrow.counterclockwise.circle.fill", color: .red,
