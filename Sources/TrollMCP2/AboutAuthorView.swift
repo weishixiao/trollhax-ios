@@ -20,31 +20,7 @@ struct AboutAuthorView: View {
                 iconColor: .white
             )
 
-            // 作者卡片
-            CardBox {
-                VStack(spacing: 12) {
-                    if let img = bundleImage("author_avatar", "jpg") {
-                        Image(uiImage: img)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 96, height: 96)
-                            .clipShape(Circle())
-                            .overlay(Circle().stroke(
-                                LinearGradient(colors: [.blue, .tmCyan], startPoint: .topLeading, endPoint: .bottomTrailing),
-                                lineWidth: 3))
-                    }
-                    Text("ZeenAE")
-                        .font(.title3.weight(.bold))
-                        .foregroundColor(.primary)
-                    Text(L10n.t("about_bio"))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineSpacing(4)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity)
-            }
+            // v6.4.7：按用户要求删除"关于作者"信息卡（头像/昵称/简介）
 
             // 开源致谢
             CardSectionHeader(icon: "heart.fill", title: L10n.t("about_thanks"), color: .pink)
@@ -109,31 +85,8 @@ struct AboutAuthorView: View {
                 }
             }
 
-            // 赞助
-            CardSectionHeader(icon: "cup.and.saucer.fill", title: L10n.t("about_sponsor"), color: .tmBrown)
-            CardBox {
-                VStack(spacing: 10) {
-                    Text(L10n.t("about_sponsor_body"))
-                        .font(.footnote)
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let img = bundleImage("wechat_qr", "jpg") {
-                        Image(uiImage: img)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(height: 200)
-                            .cornerRadius(10)
-                    } else {
-                        Text("WeChat QR")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-            }
+            // v6.4.7：按用户要求删除"赞助支持"区块（含微信收款码）
 
-            // Bug 与功能反馈
             CardSectionHeader(icon: "envelope.fill", title: L10n.t("about_feedback"), color: .blue)
             CardBox {
                 VStack(spacing: 10) {
@@ -175,6 +128,9 @@ struct AboutAuthorView: View {
 
     private var thankRows: [(String, String, String)] {
         [
+            // v6.4.7：按用户要求补上作者与本项目
+            ("🛠️", "ZeenAE", "作者 / author"),
+            ("🧰", "TrollAgent（本项目）", "iOS 全栈工具箱"),
             ("💉", "TrollFools / ElleKit", "(Lessica / rootless)"),
             ("⚙️", "Theos", "toolchain"),
             ("🔐", "ldid / insert_dylib / optool", "sign & inject"),
