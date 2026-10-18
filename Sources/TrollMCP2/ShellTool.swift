@@ -760,6 +760,51 @@ final class ShellExecTool: MCPTool {
     /// 直接拦截报错（原来放行导致 Alpine 读不到文件返回空，AI 误判为 0 字节）。
     /// 复用与 autoBridge 同一套 iOS 路径识别正则，保证护栏与桥接兜底判定一致。
 
+    /// v6.4.5：python3 解压回退（zipfile/tarfile/gzip）——bsdtar 被 AMFI 拒时使用。
+    /// 支持 `unzip <zip> [-d <dir>]` / `tar xf <archive> -C <dir>` / `gunzip <file.gz>`。
+    static func extractViaPython(command: String, limit: Int, timeout: TimeInterval) -> [String: Any]? {
+        let py = Bundle.main.bundlePath + "/bin/python3"
+        guard FileManager.default.isExecutableFile(atPath: py) else { return nil }
+        let parts = command.split(separator: " ").map(String.init)
+        guard let w = parts.first else { return nil }
+        var src = "", dst = ""
+        var i = 1
+        while i < parts.count {
+            if (parts[i] == "-C" || parts[i] == "-d"), i + 1 < parts.count { dst = parts[i+1]; i += 2; continue }
+            if !parts[i].hasPrefix("-"), src.isEmpty { src = parts[i] }
+            i += 1
+        }
+        guard !src.isEmpty, ["tar", "unzip", "zip", "gunzip", "gzip"].contains(w) else { return nil }
+        if w == "zip" { return nil }   // 打包不在此回退
+        if dst.isEmpty { dst = (src as NSString).deletingPathExtension }
+        try? FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
+        let script = """
+        import sys, os, zipfile, tarfile, gzip, shutil
+        src, dst = sys.argv[1], sys.argv[2]
+        os.makedirs(dst, exist_ok=True)
+        low = src.lower()
+        if low.endswith('.zip'):
+            with zipfile.ZipFile(src) as z:
+                z.extractall(dst)
+        elif low.endswith(('.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tar.xz')):
+            with tarfile.open(src) as t:
+                t.extractall(dst)
+        elif low.endswith('.gz'):
+            with gzip.open(src, 'rb') as f, open(os.path.join(dst, os.path.basename(src)[:-3]), 'wb') as o:
+                shutil.copyfileobj(f, o)
+        else:
+            sys.exit('unsupported')
+        print('EXTRACT_OK', dst)
+        """
+        let res = BuildRunner.shared.run(executable: py, args: ["-c", script, src, dst], env: [:], timeout: timeout)
+        var out = res.stdout + res.stderr
+        if res.timedOut { out += "\n[执行超时]" }
+        if limit > 0 && out.count > limit { out = String(out.prefix(limit)) + "\n…(截断)" }
+        return ["command": command, "exit_code": res.exitCode, "stdout": out,
+                "ios_native": true, "runtime_actual": "native-python-extract",
+                "hint": "解压由内置原生 python3 完成（zipfile/tarfile/gzip）。解压目录：\(dst)"]
+    }
+
     /// v6.3.7：原生解包/打包——libarchive 的 bsdtar（CI 用 iOS SDK 交叉编译成 Mach-O，
     /// 见 workflow "Build libarchive + bsdtar"）。tar/zip/gz 全原生，不经过 x86 模拟器。
     /// 返回 nil 表示不适用/不可用（上层继续走 busybox 或 iSH 门控）。
@@ -817,7 +862,16 @@ final class ShellExecTool: MCPTool {
         var out = res.stdout
         if !res.stderr.isEmpty { out += (out.isEmpty ? "" : "\n") + res.stderr }
         if res.timedOut { out += "\n[执行超时 \(Int(timeout))s 被终止]" }
-        if res.spawnError != nil || res.exitCode == -1 { return nil }
+        let spawnFailed = res.spawnError != nil || res.exitCode == -1
+            || (res.stdout + res.stderr).lowercased().contains("bad executable")
+        if spawnFailed {
+            // v6.4.5：bsdtar 在本机被 AMFI 拒（posix_spawn: Bad executable）时，
+            // 回退用内置原生 python3 解压（zipfile/tarfile/gzip）——python3 已验证可执行。
+            if let pyResult = ShellExecTool.extractViaPython(command: command, limit: limit, timeout: timeout) {
+                return pyResult
+            }
+            return nil
+        }
         if limit > 0 && out.count > limit {
             let spill = ToolRegistry.spillLarge("bsdtar", out)
             out = String(out.prefix(limit / 2)) + "\n…[输出太长，完整: \(spill)]…\n" + String(out.suffix(limit / 2))

@@ -102,22 +102,64 @@ struct WorkspaceBrowserView: View {
         ShareCenter.shared.saveToFiles(URL(fileURLWithPath: item.path))
     }
 
-    /// v6.4.4：解压到同名目录——调内置原生 bsdtar（libarchive 交叉编译的 Mach-O）
+    /// v6.4.5：解压到同名目录。
+    /// 主路：内置原生 bsdtar（libarchive，Mach-O）。若该二进制在本机被 AMFI 拒
+    /// （实测 posix_spawn: Bad executable），**回退到内置原生 python3**
+    /// （Python 自带 zipfile/tarfile/gzip，且 python3 在本机已验证可执行）。
     private func extract(_ item: FileItem) {
-        let bt = Bundle.main.bundlePath + "/bin/bsdtar"
-        guard FileManager.default.isExecutableFile(atPath: bt) else {
-            toast = "解压需内置 bsdtar（本包未集成）"
-            return
-        }
         let dest = currentPath + "/" + (item.name as NSString).deletingPathExtension
         try? FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
-        let res = BuildRunner.shared.run(executable: bt, args: ["xf", item.path, "-C", dest], env: [:], timeout: 180)
-        var out = res.stdout + res.stderr
-        if res.timedOut { out += "\n[执行超时]" }
-        if res.exitCode == 0 && !out.lowercased().contains("error") {
+
+        let bt = Bundle.main.bundlePath + "/bin/bsdtar"
+        if FileManager.default.isExecutableFile(atPath: bt) {
+            let res = BuildRunner.shared.run(executable: bt, args: ["xf", item.path, "-C", dest], env: [:], timeout: 180)
+            let out = res.stdout + res.stderr
+            if res.exitCode == 0 && !out.lowercased().contains("error") {
+                toast = "已解压到 \((dest as NSString).lastPathComponent)"
+                reload()
+                return
+            }
+            // 仅在"无法执行"时回退（其它错误说明 bsdtar 跑了但失败，直接报错更清楚）
+            let spawnFailed = res.exitCode == -1 || out.lowercased().contains("posix_spawn")
+                || out.lowercased().contains("bad executable")
+            if !spawnFailed {
+                toast = "解压失败(\(res.exitCode))：" + String(out.suffix(90))
+                reload()
+                return
+            }
+        }
+
+        // 回退：内置原生 python3（zipfile/tarfile/gzip）
+        let py = Bundle.main.bundlePath + "/bin/python3"
+        guard FileManager.default.isExecutableFile(atPath: py) else {
+            toast = "解压需要内置 bsdtar 或 python3（本包均不可用）"
+            return
+        }
+        let script = """
+        import sys, os, zipfile, tarfile, gzip, shutil
+        src, dst = sys.argv[1], sys.argv[2]
+        os.makedirs(dst, exist_ok=True)
+        low = src.lower()
+        if low.endswith('.zip'):
+            with zipfile.ZipFile(src) as z:
+                z.extractall(dst)
+        elif low.endswith(('.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tar.xz')):
+            with tarfile.open(src) as t:
+                t.extractall(dst)
+        elif low.endswith('.gz'):
+            out = os.path.join(dst, os.path.basename(src)[:-3])
+            with gzip.open(src, 'rb') as f, open(out, 'wb') as o:
+                shutil.copyfileobj(f, o)
+        else:
+            sys.exit('unsupported archive type')
+        print('EXTRACT_OK')
+        """
+        let res2 = BuildRunner.shared.run(executable: py, args: ["-c", script, item.path, dest], env: [:], timeout: 300)
+        let out2 = res2.stdout + res2.stderr
+        if out2.contains("EXTRACT_OK") {
             toast = "已解压到 \((dest as NSString).lastPathComponent)"
         } else {
-            toast = "解压失败(\(res.exitCode))：" + String(out.suffix(90))
+            toast = "解压失败：" + String(out2.suffix(90))
         }
         reload()
     }
