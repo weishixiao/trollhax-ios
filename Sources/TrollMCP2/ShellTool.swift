@@ -177,6 +177,17 @@ final class ShellExecTool: MCPTool {
                         "stdout": guardMsg,
                         "hint": "该命令会被路由到 Alpine，但 Alpine 读不到该 iOS 路径（非 Workspace/Containers 绑定目录，或文件>2MB）。三种解法：①先 cp 到 Workspace：`cp <file> /var/mobile/Documents/Workspace/`，再走 Alpine /ios_workspace 直读分析；②用原生 shell 工具（strings/nm/hexdump 直读大文件、du 统计目录大小、plutil 读 plist——均 iOS 原生直跑，勿用 for 循环绕 Alpine，arm64 上会崩）；③对二进制用 binary.symbols / file analyze。"]
             }
+            // v6.3.1：iSH 崩溃防护（符号化凭证）——6.3.0 崩溃日志 base= 还原后确认：
+            //   帧 = cpu_run_to_interrupt +1204 / task_run_current +224 / sys_sched_yield
+            //   即 iSH(x86 模拟器) 在 arm64 真机执行 shell 脚本时段错误 → 整个 App 被杀。
+            // for/while/case/$( ) 这类脚本结构最容易触发，且这类需求本可用原生命令完成
+            // （find -maxdepth / du -sh / plutil / ls / grep）。除非显式 runtime=alpine，否则拦截。
+            if !forceAlpine, ShellExecTool.looksLikeCrashProneShellScript(boundCmd) {
+                return ["command": trimmed, "exit_code": 1, "ios_native": false,
+                        "runtime_actual": "blocked",
+                        "stdout": "已拦截：该命令含 shell 脚本结构（for/while/case/$(...)/sh -c），在 iSH(arm64 模拟器) 上执行会段错误闪退（实测崩溃栈 cpu_run_to_interrupt + task_run_current + sys_sched_yield）。\n改用 iOS 原生方式（均原生直跑，不闪退）：\n• 遍历目录：`find <目录> -maxdepth 2 -type d`（勿用 for 循环）\n• 统计大小：`du -sh <目录>` 或 `du -sk <目录>`\n• 读写 plist：`plutil -extract <Key> raw -o - <文件>`\n• 列文件/搜索：`ls` / `cat` / `grep`\n确实需要在 Alpine 执行时，请显式传 runtime=alpine（自行承担闪退风险）。",
+                        "hint": "iSH 段错误防护：脚本结构已拦截，请改用原生命令（find/du/plutil/ls/grep）"]
+            }
             let (output, exitCode, timedOut) = ISHEngine.exec(boundCmd, timeout: timeout)            // P3 按需补给：Alpine 输出显示缺工具(command not found)且命中白名单 → 自动 apk add 并重跑一次，
             // 免 agent 反复探测缺什么、也避免"先探测→再装→再跑"的多轮试探。
             let (finalOut, finalExit, finalTimed, provisionNote) = ShellExecTool.provisionAndRerun(boundCmd, output: output, exitCode: exitCode, timedOut: timedOut, timeout: timeout)
@@ -718,6 +729,24 @@ final class ShellExecTool: MCPTool {
     /// v6.0.28: 修复假零结果——增加 autoBind 范围检查：路径在 iOS 存在但不在 autoBind 范围内，
     /// 直接拦截报错（原来放行导致 Alpine 读不到文件返回空，AI 误判为 0 字节）。
     /// 复用与 autoBridge 同一套 iOS 路径识别正则，保证护栏与桥接兜底判定一致。
+
+    /// v6.3.1：判断命令是否含"在 iSH 上极易段错误"的 shell 脚本结构。
+    /// 依据 6.3.0 崩溃日志符号化结果（cpu_run_to_interrupt 段错误）：for/while/case、
+    /// 命令替换 $( )、以及 sh -c 包装脚本——这些都无法走 iOS 原生执行器，只能进 Alpine。
+    static func looksLikeCrashProneShellScript(_ c: String) -> Bool {
+        let patterns = [
+            #"\bfor\s+[^;]+\bin\b"#,
+            #"\bwhile\s+[^;]+\bdo\b"#,
+            #"\bcase\s+[^;]+\bin\b"#,
+            #"\$\("#,
+            #"^\s*(sh|bash)\s+"#
+        ]
+        for p in patterns {
+            if c.range(of: p, options: .regularExpression) != nil { return true }
+        }
+        return false
+    }
+
     static func alpineIOSPathGuard(_ command: String) -> String? {
         let fm = FileManager.default
         let prefixes = ["/var/mobile/", "/private/var/mobile/", "/System/", "/var/containers/"]

@@ -22,7 +22,6 @@ struct ChatView: View {
     // UIKit 方案真机稳定。标记位 + sheet onDismiss 触发，保证面板完全关闭后再 present（不再猜时间延迟）。
     @State private var pendingFilePick = false
     @State private var showModelPicker = false  // v2.9.36：聊天框切换上游模型
-    @State private var showQuickSwitch = false  // v6.2.8：快速切换（含上游模型列表）
     // v3.3.4：输入框 + 号展开"应用/相册/文件/浏览器"快捷行（点 + 变 x 收起）
     @State private var attachExpanded = false
 
@@ -63,36 +62,9 @@ struct ChatView: View {
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .lineLimit(1)
-                        // v6.2.7：模型快速切换——旧实现点模型名弹 sheet(半屏+导航层)，用户反馈"无法快速切换"。
-                        // 改系统 Menu 下拉：点模型名直接出菜单列全部模型，一点即切，零 sheet 零导航。
-                        Menu {
-                            ForEach(modelStore.configs) { cfg in
-                                Button(action: {
-                                    var c = cfg
-                                    c.isDefault = true
-                                    modelStore.update(c)
-                                    showToast("已切换：\(cfg.name)")
-                                }) {
-                                    if cfg.isDefault {
-                                        Label("\(cfg.name) · \(cfg.model)", systemImage: "checkmark.circle.fill")
-                                    } else {
-                                        Text("\(cfg.name) · \(cfg.model)")
-                                    }
-                                }
-                            }
-                            Divider()
-                            // v6.2.8：用户反馈"快速切换只有模型名称，没有中转站各个模型"——
-                            // 增加上游模型列表入口：读取该中转站 /models，点选即切到对应模型
-                            Button(action: { showQuickSwitch = true }) {
-                                Label("更多模型（获取中转站模型列表）", systemImage: "arrow.triangle.2.circlepath")
-                            }
-                            Button(action: {
-                                AppUIState.shared.settingsJumpToModels = true
-                                AppUIState.shared.settingsPresented = true
-                            }) {
-                                Label("在设置中管理模型", systemImage: "gearshape.fill")
-                            }
-                        } label: {
+                        // v6.3.1：按用户要求改为"选择模型"面板（对齐其截图样式）——点模型名弹出
+                        // 可搜索面板：已保存配置 + 上游 /models 列表直接展示，点选即切换
+                        Button(action: { showModelPicker = true }) {
                             HStack(spacing: 4) {
                                 Image(systemName: "circle.fill")
                                     .font(.system(size: 7))
@@ -106,6 +78,7 @@ struct ChatView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
+                        .buttonStyle(PlainButtonStyle())
                     }
                 }
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -281,10 +254,6 @@ struct ChatView: View {
             }
         }
         // v2.9.36：聊天框切换上游模型（点"当前模型"弹出，老 MCP 风格半屏）
-        .sheet(isPresented: $showQuickSwitch) {
-            // v6.2.8：快速切换模型（含上游中转站模型列表）
-            QuickModelSwitchSheet()
-        }
         .sheet(isPresented: $showModelPicker) {
             // 老 MCP 半屏；presentationDetents 需 iOS16+
             if #available(iOS 16.0, *) {
@@ -1194,35 +1163,89 @@ struct ChatModelPickerSheet: View {
     @Environment(\.dismiss) private var dismissSheet
     let onSelect: (ModelConfig) -> Void
 
+    // v6.3.1：按用户要求重做为"选择模型"面板（对齐其截图样式）：
+    // 顶部搜索框 + 已保存模型 + 上游中转站模型列表（读 /models），点选即切换。
+    @State private var search = ""
+    @State private var upstream: [String] = []
+    @State private var loadingUpstream = false
+    @State private var loadError: String?
+
+    private var current: ModelConfig? { modelStore.defaultConfig }
+
+    private var filteredConfigs: [ModelConfig] {
+        guard !search.isEmpty else { return modelStore.configs }
+        return modelStore.configs.filter {
+            ($0.name + " " + $0.model + " " + $0.provider).localizedCaseInsensitiveContains(search)
+        }
+    }
+    private var filteredUpstream: [String] {
+        guard !search.isEmpty else { return upstream }
+        return upstream.filter { $0.localizedCaseInsensitiveContains(search) }
+    }
+
     var body: some View {
-        CompatNav {
+        NavigationView {
             List {
-                Section(header: SettingSectionHeader(title: "选择上游模型")) {
-                    ForEach(modelStore.configs) { cfg in
-                        Button(action: { onSelect(cfg) }) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(cfg.name)
-                                        .font(.body)
-                                        .foregroundColor(.primary)
-                                    Text("\(cfg.model) · \(cfg.provider)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                if cfg.isDefault {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.blue)
-                                }
+                // 搜索框
+                Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                        TextField("搜索模型", text: $search)
+                            .font(.subheadline)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        if !search.isEmpty {
+                            Button { search = "" } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
                             }
+                        }
+                    }
+                }
+                // 已保存的配置
+                Section(header: Text("已保存的模型")) {
+                    ForEach(filteredConfigs) { cfg in
+                        pickerRow(name: cfg.name,
+                                  sub: "\(cfg.provider) · \(cfg.model)",
+                                  tags: ModelTags.tags(for: cfg.model),
+                                  selected: cfg.isDefault) {
+                            switchTo(cfg, model: nil)
+                        }
+                    }
+                }
+                // 上游模型（当前默认配置对应的中转站）
+                Section(header: HStack(spacing: 6) {
+                    Text("上游模型" + (current.map { " · \($0.name)" } ?? ""))
+                    Spacer()
+                    if loadingUpstream {
+                        ProgressView().scaleEffect(0.7)
+                    } else {
+                        Button { fetchUpstream() } label: {
+                            Image(systemName: "arrow.clockwise").font(.caption)
+                        }
+                        .disabled(current == nil)
+                    }
+                }) {
+                    if let e = loadError {
+                        Text(e).font(.caption).foregroundColor(.red).lineLimit(3)
+                    }
+                    if !loadingUpstream && upstream.isEmpty && loadError == nil {
+                        Text(current == nil ? "当前没有默认模型" : "点右上角刷新获取上游模型列表")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(filteredUpstream, id: \.self) { m in
+                        pickerRow(name: m,
+                                  sub: current.map { $0.provider } ?? "",
+                                  tags: ModelTags.tags(for: m),
+                                  selected: current?.model == m) {
+                            switchTo(current, model: m)
                         }
                     }
                 }
                 Section {
                     Button(action: {
-                        // v6.2.0：先关闭当前模型选择 sheet，再延迟弹出设置
-                        // （若不先 dismiss，fullScreenCover 会被当前 sheet 挡住，需二次点击才生效）
                         dismissSheet()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                             AppUIState.shared.settingsJumpToModels = true
@@ -1235,16 +1258,90 @@ struct ChatModelPickerSheet: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("切换模型")
+            .navigationTitle("选择模型")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { }
-                        .hidden()
+                    Button("完成") { dismissSheet() }
                 }
+            }
+            .onAppear {
+                if upstream.isEmpty { fetchUpstream() }
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    @ViewBuilder
+    private func pickerRow(name: String, sub: String, tags: [String],
+                           selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundColor(selected ? .blue : Color(UIColor.tertiaryLabel))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(name)
+                        .font(.body)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if !sub.isEmpty {
+                            Text(sub)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        ForEach(tags, id: \.self) { t in
+                            Text(t)
+                                .font(.system(size: 10, weight: .medium))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color(UIColor.secondarySystemFill))
+                                .foregroundColor(.secondary)
+                                .cornerRadius(4)
+                        }
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private func switchTo(_ cfg: ModelConfig?, model: String?) {
+        guard var c = cfg else { return }
+        if let m = model { c.model = m }
+        c.isDefault = true
+        modelStore.update(c)
+        onSelect(c)
+        dismissSheet()
+    }
+
+    private func fetchUpstream() {
+        guard let cfg = current else { return }
+        loadingUpstream = true
+        loadError = nil
+        ModelAPIClient.shared.fetchModelList(config: cfg) { result in
+            loadingUpstream = false
+            switch result {
+            case .success(let models): upstream = models
+            case .failure(let e): loadError = e
+            }
+        }
+    }
+}
+
+/// v6.3.1：模型能力标签（按模型名启发式，用于选择面板展示 img/video/pdf/img-out）
+enum ModelTags {
+    static func tags(for model: String) -> [String] {
+        let m = model.lowercased()
+        var t: [String] = []
+        if m.contains("vl") || m.contains("vision") || m.contains("-image") || m.contains("image-")
+            || m.contains("gpt-4o") || m.contains("gemini") || m.contains("o4-") { t.append("img") }
+        if m.contains("video") { t.append("video") }
+        if m.contains("pdf") { t.append("pdf") }
+        if m.contains("dall") || m.contains("flux") || m.contains("image-out") || m.contains("-img-out") { t.append("img-out") }
+        return t
     }
 }
 
