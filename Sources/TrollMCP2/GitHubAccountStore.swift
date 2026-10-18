@@ -233,8 +233,12 @@ final class GitHubAccountStore: ObservableObject {
                 } else if let error = error {
                     // v3.0.42：只有"终止性"错误才停轮询；网络错误/解析failed/authorization_pending/slow_down
                     // 一律继续等下一次——之前网络错误会 cancel timer，移动网络一抖授权流程就死，卡"等待授权"。
+                    // v6.4.1：把"配置类"错误也判终止（原来会一直转圈到超时，用户只看到"等待授权"）：
+                    // incorrect_client_credentials / device_flow_disabled / unsupported_grant_type
+                    // 都是 Client ID 或 OAuth App 未开 Device Flow 导致的，必须立刻告诉用户。
                     let terminalErrors = ["access_denied", "expired_token",
-                                          "incorrect_client_credentials", "invalid_grant"]
+                                          "incorrect_client_credentials", "invalid_grant",
+                                          "device_flow_disabled", "unsupported_grant_type"]
                     if terminalErrors.contains(error) {
                         timer.cancel()
                         self.pollTimer = nil
@@ -261,11 +265,15 @@ final class GitHubAccountStore: ObservableObject {
         let body = "client_id=\(cid.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? cid)&device_code=\(deviceCode.device_code.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? deviceCode.device_code)&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code"
         req.httpBody = body.data(using: .utf8)
 
-        URLSession.shared.dataTask(with: req) { data, _, err in
-            if err != nil { completion(nil, "网络错误"); return }
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            // v6.4.1：诊断透出——原来解析失败只说"响应解析failed"，无法定位（用户"已授权但 app
+            // 收不到 token"就是被这句吞掉的）。现在保留 HTTP 状态 + 原始响应片段。
+            if let err = err { completion(nil, "网络错误: \(err.localizedDescription)"); return }
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                completion(nil, "响应解析failed")
+                let raw = String(data: data ?? Data(), encoding: .utf8) ?? "(无响应体)"
+                completion(nil, "HTTP \(status) 响应无法解析：\(raw.prefix(160))")
                 return
             }
             if let token = json["access_token"] as? String {
