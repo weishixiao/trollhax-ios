@@ -762,6 +762,16 @@ final class ShellExecTool: MCPTool {
     static func runViaNativeBusybox(_ command: String, limit: Int, timeout: TimeInterval) -> [String: Any]? {
         let bb = Bundle.main.bundlePath + "/bin/busybox"
         guard FileManager.default.isExecutableFile(atPath: bb) else { return nil }
+        // v6.3.6：iOS 内核只能执行 Mach-O（ELF 一律 cannot execute binary file）——
+        // Alpine 官方 busybox 是 ELF，必须先校验魔数，非 Mach-O 直接放弃本路由，
+        // 避免返回 "cannot execute binary file" 这类无意义错误。
+        guard let fh = FileHandle(forReadingAtPath: bb) else { return nil }
+        let head = fh.readData(ofLength: 4)
+        fh.closeFile()
+        let magicLE = head.withUnsafeBytes { $0.load(as: UInt32.self) }
+        let magicBE = head.withUnsafeBytes { $0.load(as: UInt32.self).byteSwapped }
+        let isMachO = (magicLE == 0xfeedfacf) || (magicBE == 0xfeedface) || (magicBE == 0xcafebabe)
+        guard isMachO else { return nil }
 
         // Alpine 时代的挂载路径 → iOS 真实路径；/tmp → App 容器 tmp
         var cmd = alpineToIOSPath(command)
@@ -785,7 +795,9 @@ final class ShellExecTool: MCPTool {
 
         // applet/命令缺失 → 让上层回退（iSH 若开启则走 iSH）
         let lc = out.lowercased()
-        if res.exitCode == 127 || lc.contains("applet not found") || lc.contains("not found") {
+        if res.exitCode == 127 || res.exitCode == -1 || res.spawnError != nil
+            || lc.contains("applet not found") || lc.contains("not found")
+            || lc.contains("cannot execute") {
             return ["_busybox_fallback": true, "stdout": out]
         }
 

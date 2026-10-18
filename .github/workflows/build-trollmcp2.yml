@@ -36,27 +36,9 @@ jobs:
           key: native-tools-v15
           save-always: false
 
-      # v6.3.5: 原生 arm64 busybox（静态单文件）——替代 x86 模拟的 Alpine/iSH。
-      # iSH 在 arm64 真机执行时反复段错误（用户 11 次闪退 100% 属此类）；busybox 原生执行
-      # 零模拟零闪退，且内置 sh/tar/gzip/unzip/wget/awk/sed/grep/find/du/sort 等 applet，
-      # 覆盖绝大多数原先"必须走 Alpine"的命令（apk/pip 除外）。
-      - name: Fetch busybox (aarch64 static, native Alpine userland)
-        run: |
-          mkdir -p native-tools-out
-          cd /tmp
-          INDEX=https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/aarch64/
-          PKG=$(curl -s "$INDEX" | grep -oE 'busybox-static-[0-9][^"]*\.apk' | head -1)
-          echo ">>> busybox-static pkg: $PKG"
-          curl -sL -o busybox.apk "$INDEX$PKG"
-          rm -rf bbx && mkdir -p bbx && tar -xzf busybox.apk -C bbx 2>/dev/null || tar -xf busybox.apk -C bbx
-          BIN=$(find bbx -type f \( -name 'busybox.static' -o -name 'busybox' \) | head -1)
-          echo ">>> extracted: $BIN"
-          file "$BIN" || true
-          cp "$BIN" "$GITHUB_WORKSPACE/native-tools-out/busybox"
-          chmod +x "$GITHUB_WORKSPACE/native-tools-out/busybox"
-          "$GITHUB_WORKSPACE/native-tools-out/busybox" --help 2>&1 | head -3 || true
-          ls -la "$GITHUB_WORKSPACE/native-tools-out/busybox"
-
+      # v6.3.6 备注：Alpine 官方 busybox 是 ELF，iOS 内核拒绝执行（只认 Mach-O），
+      # 故原生 busybox 方案不成立，已移除该下载步骤。ShellTool 侧保留 Mach-O 校验，
+      # 将来若提供 iOS 交叉编译的 Mach-O busybox/toybox 可直接启用。
       - name: Build lua 5.4 (iOS arm64)
         if: steps.tools-cache.outputs.cache-hit != 'true'
         run: |
@@ -385,7 +367,7 @@ jobs:
     needs: [native-tools, native-python, native-wheels, native-nmap, native-llvm]
     runs-on: macos-latest
     env:
-      RELEASE_VERSION: 6.3.5
+      RELEASE_VERSION: 6.3.6
     steps:
       - uses: actions/checkout@v4
 
