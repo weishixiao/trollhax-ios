@@ -776,7 +776,7 @@ final class ShellExecTool: MCPTool {
         guard le == 0xfeedfacf || be == 0xfeedface || be == 0xcafebabe else { return nil }
 
         let parts = command.split(separator: " ").map(String.init)
-        guard let w = parts.first, ["tar", "unzip", "zip"].contains(w) else { return nil }
+        guard let w = parts.first, ["tar", "unzip", "zip", "gunzip", "gzip"].contains(w) else { return nil }
         var args: [String] = []
         switch w {
         case "tar":
@@ -801,6 +801,11 @@ final class ShellExecTool: MCPTool {
             let rest = Array(parts.dropFirst()).filter { $0 != "-r" }
             guard rest.count >= 2 else { return nil }
             args = ["cf"] + rest
+        case "gunzip", "gzip":
+            // 单文件 .gz：bsdtar 自动识别并解出同名文件（保留源文件）
+            let files = Array(parts.dropFirst()).filter { !$0.hasPrefix("-") }
+            guard files.count == 1 else { return nil }
+            args = ["xf", files[0]]
         default:
             return nil
         }

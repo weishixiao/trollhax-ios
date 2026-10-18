@@ -20,6 +20,8 @@ struct WorkspaceBrowserView: View {
     @State private var showNewFolder = false
     @State private var newFolderName = ""
     @State private var toast: String?
+    // v6.4.4：上传用的 document picker delegate（需强引用，否则点击无回调）
+    @State private var importDelegate: WorkspaceImportDelegate?
 
     struct FileItem: Identifiable, Hashable {
         let id = UUID()
@@ -54,6 +56,81 @@ struct WorkspaceBrowserView: View {
         "tmp": "临时文件",
         "deb": "deb 包缓存"
     ]
+
+    /// v6.4.4：返回上一级
+    private func goUp() {
+        let root = Workspace.root.path
+        guard currentPath != root else { return }
+        let parent = (currentPath as NSString).deletingLastPathComponent
+        currentPath = parent.hasPrefix(root) ? parent : root
+    }
+
+    /// v6.4.4：是否压缩包（bsdtar 可解：zip/tar/gz/tgz）
+    static func isArchive(_ name: String) -> Bool {
+        let n = name.lowercased()
+        return n.hasSuffix(".zip") || n.hasSuffix(".tar") || n.hasSuffix(".tar.gz")
+            || n.hasSuffix(".tgz") || n.hasSuffix(".gz")
+    }
+
+    /// v6.4.4：上传——从"文件"App 选择（asCopy）后复制进当前目录
+    private func importFiles() {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.allowsMultipleSelection = true
+        let cur = currentPath
+        let delegate = WorkspaceImportDelegate { urls in
+            var ok = 0
+            for u in urls {
+                let dst = cur + "/" + u.lastPathComponent
+                do {
+                    if FileManager.default.fileExists(atPath: dst) {
+                        try FileManager.default.removeItem(atPath: dst)
+                    }
+                    try FileManager.default.copyItem(at: u, to: URL(fileURLWithPath: dst))
+                    ok += 1
+                } catch { /* 单个失败不影响其它 */ }
+            }
+            self.toast = "已上传 \(ok)/\(urls.count) 个文件"
+            self.reload()
+        }
+        importDelegate = delegate
+        picker.delegate = delegate
+        Self.topVC()?.present(picker, animated: true)
+    }
+
+    /// v6.4.4：下载——存储到"文件"App（复用 ShareCenter 的导出选择器）
+    private func exportToFiles(_ item: FileItem) {
+        ShareCenter.shared.saveToFiles(URL(fileURLWithPath: item.path))
+    }
+
+    /// v6.4.4：解压到同名目录——调内置原生 bsdtar（libarchive 交叉编译的 Mach-O）
+    private func extract(_ item: FileItem) {
+        let bt = Bundle.main.bundlePath + "/bin/bsdtar"
+        guard FileManager.default.isExecutableFile(atPath: bt) else {
+            toast = "解压需内置 bsdtar（本包未集成）"
+            return
+        }
+        let dest = currentPath + "/" + (item.name as NSString).deletingPathExtension
+        try? FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
+        let res = BuildRunner.shared.run(executable: bt, args: ["xf", item.path, "-C", dest], env: [:], timeout: 180)
+        var out = res.stdout + res.stderr
+        if res.timedOut { out += "\n[执行超时]" }
+        if res.exitCode == 0 && !out.lowercased().contains("error") {
+            toast = "已解压到 \((dest as NSString).lastPathComponent)"
+        } else {
+            toast = "解压失败(\(res.exitCode))：" + String(out.suffix(90))
+        }
+        reload()
+    }
+
+    /// 顶层 VC（用于 present document picker）
+    static func topVC() -> UIViewController? {
+        var vc = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }?.rootViewController
+        while let p = vc?.presentedViewController { vc = p }
+        return vc
+    }
 
     /// v3.0.90：目录备注——先精确匹配，再模糊匹配（动态名字）
     static func noteForDir(_ name: String) -> String? {
@@ -172,6 +249,12 @@ struct WorkspaceBrowserView: View {
                         .contextMenu {
                             Button { copyPath(item.path) } label: { Label("复制路径", systemImage: "doc.on.doc") }
                             if !item.isDir {
+                                // v6.4.4：下载——存储到"文件"App
+                                Button { exportToFiles(item) } label: { Label("存储到文件（下载）", systemImage: "square.and.arrow.up") }
+                                // v6.4.4：解压——内置原生 bsdtar（Mach-O libarchive），不经 x86 模拟器
+                                if Self.isArchive(item.name) {
+                                    Button { extract(item) } label: { Label("解压到此处", systemImage: "archivebox") }
+                                }
                                 // v4.3.44：文件分享走 QuickLook 中间层（menuShare 低版本分支设 binding）
                                 SharePresenter.menuShare(url: URL(fileURLWithPath: item.path))
                             }
@@ -187,7 +270,14 @@ struct WorkspaceBrowserView: View {
         .navigationTitle(L10n.t("page_workspace"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // v6.4.4：返回上一级（面包屑之外给一个显式按钮）
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button { goUp() } label: { Label("上一级", systemImage: "arrow.up") }
+                    .disabled(currentPath == Workspace.root.path)
+            }
             ToolbarItemGroup(placement: .navigationBarTrailing) {
+                // v6.4.4：上传——从"文件"App 选文件复制进当前目录
+                Button { importFiles() } label: { Label("上传", systemImage: "square.and.arrow.down") }
                 Button { showNewFolder = true } label: { Label("新建", systemImage: "folder.badge.plus") }
             }
         }
@@ -548,3 +638,13 @@ struct FilePreviewView: View {
 }
 
 /// 系统分享（复用 ChatView.ShareSheet，此处不再定义）
+
+
+/// v6.4.4：工作区上传的文件选择回调（UIDocumentPickerDelegate 需 NSObject 实现）
+final class WorkspaceImportDelegate: NSObject, UIDocumentPickerDelegate {
+    private let onPick: ([URL]) -> Void
+    init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        onPick(urls)
+    }
+}
