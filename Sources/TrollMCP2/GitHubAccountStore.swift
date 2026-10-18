@@ -198,8 +198,35 @@ final class GitHubAccountStore: ObservableObject {
     }
 
     /// 第二步：轮询换取 access_token (interval 秒一次，最长 expires_in 秒）。
+    /// v6.4.3：最近一次 device code（供"我已授权·立即检查"手动触发）
+    @Published var currentDeviceCode: DeviceCode?
+
+    /// v6.4.3：手动立即检查一次（用户已在网页授权完成，但自动轮询因网络抖动一直没拿到 token
+    /// ——实测痛点："已授权但 app 里无法返回授权请求"，因为轮询失败是静默重试、界面无反馈）。
+    func checkNow() {
+        guard let dc = currentDeviceCode else { return }
+        deviceFlowState = "正在确认授权结果…"
+        exchangeDeviceToken(deviceCode: dc) { [weak self] token, error in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if let token = token {
+                    self.pollTimer?.cancel()
+                    self.pollTimer = nil
+                    self.isDevicePolling = false
+                    self.deviceFlowState = nil
+                    self.finishLoginWith(token: token) { _, _ in }
+                } else if let error = error {
+                    // 把真实原因显示出来（网络/HTTP/错误码），不再静默
+                    self.lastError = error
+                    self.deviceFlowState = "确认失败：\(error)（可稍后重试或改用下方手动 Token）"
+                }
+            }
+        }
+    }
+
     func pollDeviceToken(deviceCode: DeviceCode, completion: @escaping (Bool, String?) -> Void) {
         isDevicePolling = true
+        currentDeviceCode = deviceCode   // v6.4.3：供手动立即检查
         deviceFlowState = "请在浏览器输入代码 \(deviceCode.user_code)，等待授权…"
 
         let deadline = Date().addingTimeInterval(Double(deviceCode.expires_in))

@@ -347,6 +347,19 @@ struct AddGitHubAccountView: View {
                             Text(L10n.t("ui_120")).font(.caption).foregroundColor(.secondary)
                         }
                     }
+                    // v6.4.3：已授权却一直等不到结果时（自动轮询因网络抖动静默重试），
+                    // 提供手动立即检查 + 把真实原因显示出来。
+                    SettingRowButton(
+                        title: "我已授权 · 立即检查",
+                        subtitle: "网页上已点 Authorize 后用它直接确认",
+                        icon: "checkmark.shield",
+                        color: .green
+                    ) {
+                        store.checkNow()
+                    }
+                    if let st = store.deviceFlowState, !st.isEmpty, st.contains("失败") || st.contains("确认") {
+                        Text(st).font(.caption).foregroundColor(.orange)
+                    }
                 }
             } else {
                 Text(L10n.t("ui_113")).font(.footnote).foregroundColor(.green)
