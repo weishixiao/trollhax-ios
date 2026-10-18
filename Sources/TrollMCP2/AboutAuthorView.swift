@@ -12,13 +12,7 @@ struct AboutAuthorView: View {
 
     var body: some View {
         PageContainer {
-            PageHeader(
-                icon: "person.crop.circle.fill",
-                title: L10n.t("about_title"),
-                subtitle: L10n.t("about_subtitle"),
-                colors: [.blue, .tmCyan],
-                iconColor: .white
-            )
+            // v6.4.9：按用户要求删除顶部"关于作者"方块（图标+标题+副标题）
 
             // v6.4.7：按用户要求删除"关于作者"信息卡（头像/昵称/简介）
 
@@ -129,7 +123,7 @@ struct AboutAuthorView: View {
     private var thankRows: [(String, String, String)] {
         [
             // v6.4.7：按用户要求补上作者与本项目
-            ("🛠️", "ZeenAE", "作者 / author"),
+            ("🛠️", "TrollAgent", "ZeenAE"),
             ("🧰", "TrollAgent（本项目）", "iOS 全栈工具箱"),
             ("💉", "TrollFools / ElleKit", "(Lessica / rootless)"),
             ("⚙️", "Theos", "toolchain"),
