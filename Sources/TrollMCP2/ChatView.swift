@@ -57,29 +57,11 @@ struct ChatView: View {
             .toolbar {
                 // v3.4.3：标题 + 模型名（🟢 deepseek v4 ▽）与右侧图标放同一平行线（导航栏 principal）
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        Text(selectionMode ? "已选 \(selectedIds.count) 条" : store.currentTitle)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-                        // v6.3.1：按用户要求改为"选择模型"面板（对齐其截图样式）——点模型名弹出
-                        // 可搜索面板：已保存配置 + 上游 /models 列表直接展示，点选即切换
-                        Button(action: { showModelPicker = true }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "circle.fill")
-                                    .font(.system(size: 7))
-                                    .foregroundColor(.green)
-                                Text(modelStore.defaultConfig?.name ?? "未选择模型")
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.secondary)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
+                    // v6.4.9：任务名居中；模型快速切换移到最右侧（见 navigationBarTrailing）
+                    Text(selectionMode ? "已选 \(selectedIds.count) 条" : store.currentTitle)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
                 }
                 ToolbarItem(placement: .navigationBarLeading) {
                     if selectionMode {
@@ -107,8 +89,25 @@ struct ChatView: View {
                                 .disabled(selectedIds.isEmpty)
                         }
                     } else {
-                        // v6.2.7：按用户要求删除右上角喇叭(TTS 开关)与确认勾选(选择模式)按钮
-                        EmptyView()
+                        // v6.2.7：删除右上角喇叭(TTS 开关)与确认勾选(选择模式)按钮
+                        // v6.4.9：按用户要求——模型快速切换键移到最右侧（任务名保持居中）
+    // v6.3.1：按用户要求改为"选择模型"面板（对齐其截图样式）——点模型名弹出
+                            // 可搜索面板：已保存配置 + 上游 /models 列表直接展示，点选即切换
+                            Button(action: { showModelPicker = true }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "circle.fill")
+                                        .font(.system(size: 7))
+                                        .foregroundColor(.green)
+                                    Text(modelStore.defaultConfig?.name ?? "未选择模型")
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.secondary)
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
                     }
                 }
             }
