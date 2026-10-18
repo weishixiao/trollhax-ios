@@ -169,6 +169,14 @@ final class ShellExecTool: MCPTool {
             // 100% 是 iSH(x86 模拟器) 在 arm64 上段错误——cpu_run_to_interrupt +1204 /
             // poll_wakeup +48 / err_map +180 等，均在后台引擎线程。日常用原生命令即可，
             // 需要 apk/git/完整 tar 时在 设置→安全 手动开启。
+            // v6.5.2：file 命令 → 内置原生 python3 读文件头判定（替代 iSH 的 file 二进制——
+            // 用户实测 iSH 一执行 file/tar 就段错误 SIGSEGV，这是模拟器缺陷）。
+            if !forceAlpine, trimmed == "file" || trimmed.hasPrefix("file ") {
+                if let r = ShellExecTool.runFileViaPython(trimmed, limit: outLimit, timeout: timeout) {
+                    AuditLog.shared.log("shell.exec (native python file)", detail: String(trimmed.prefix(100)))
+                    return r
+                }
+            }
             // v6.3.7：tar/unzip/zip 优先走原生 bsdtar（libarchive 交叉编译成 Mach-O，
             // CI 产出 bin/bsdtar）——解包/打包不再需要 Alpine，物理上不闪退。
             if !forceAlpine,
@@ -759,6 +767,72 @@ final class ShellExecTool: MCPTool {
     /// v6.0.28: 修复假零结果——增加 autoBind 范围检查：路径在 iOS 存在但不在 autoBind 范围内，
     /// 直接拦截报错（原来放行导致 Alpine 读不到文件返回空，AI 误判为 0 字节）。
     /// 复用与 autoBridge 同一套 iOS 路径识别正则，保证护栏与桥接兜底判定一致。
+
+    /// v6.5.2：`file` 替代实现——用内置原生 python3 读文件头判定类型。
+    /// 动机：iSH 里的 file 二进制在 arm64 真机执行即段错误（用户实测 + 日志解读一致），
+    /// 而"看文件类型"完全可本地判定（魔数），无需外部命令。
+    static func runFileViaPython(_ command: String, limit: Int, timeout: TimeInterval) -> [String: Any]? {
+        let py = Bundle.main.bundlePath + "/bin/python3"
+        guard FileManager.default.isExecutableFile(atPath: py) else { return nil }
+        let paths = command.split(separator: " ").map(String.init).dropFirst().filter { !$0.hasPrefix("-") }
+        guard !paths.isEmpty else { return nil }
+        // 注意：全部用 fromhex 构造魔数，避免反斜杠转义问题
+        let script = """
+        import sys
+        SIGS = [(bytes.fromhex('1f8b'), 'gzip compressed data'),
+                (bytes.fromhex('504b0304'), 'Zip archive data'),
+                (bytes.fromhex('7f454c46'), 'ELF executable'),
+                (bytes.fromhex('cffaedfe'), 'Mach-O 64-bit executable'),
+                (bytes.fromhex('cafebabe'), 'Mach-O universal binary'),
+                (bytes.fromhex('89504e47'), 'PNG image data'),
+                (bytes.fromhex('ffd8ff'), 'JPEG image data'),
+                (bytes.fromhex('25504446'), 'PDF document'),
+                (bytes.fromhex('edabeedb'), 'RPM package'),
+                (bytes.fromhex('213c617263683e'), 'ar archive / deb package'),
+                (bytes.fromhex('425a68'), 'bzip2 compressed data'),
+                (bytes.fromhex('fd377a585a00'), 'XZ compressed data'),
+                (bytes.fromhex('377abcaf271c'), '7-zip archive'),
+                (bytes.fromhex('04034b50'), 'Zip archive data (LE)'),
+                (bytes.fromhex('626f6f6b'), 'Apple book / binary plist marker')]
+        for p in sys.argv[1:]:
+            try:
+                with open(p, 'rb') as f:
+                    h = f.read(16)
+            except Exception as e:
+                print(p + ': cannot open (' + str(e) + ')'); continue
+            t = None
+            for sig, name in SIGS:
+                if h.startswith(sig):
+                    t = name; break
+            if t is None and h[:2] == b'BZ':
+                t = 'bzip2 compressed data'
+            if t is None:
+                try:
+                    with open(p, 'rb') as f:
+                        f.seek(257); u = f.read(5)
+                    if u == b'ustar': t = 'POSIX tar archive'
+                except Exception:
+                    pass
+            if t is None:
+                try:
+                    with open(p, 'rb') as f:
+                        f.read(8192).decode('utf-8')
+                    t = 'UTF-8 Unicode text'
+                except Exception:
+                    t = 'data'
+            print(p + ': ' + t)
+        """
+        var args = ["-c", script]
+        args.append(contentsOf: paths)
+        let res = BuildRunner.shared.run(executable: py, args: args, env: [:], timeout: timeout)
+        var out = res.stdout + res.stderr
+        if res.timedOut { out += "\n[执行超时]" }
+        if let e = res.spawnError, !e.isEmpty { out += "\n[spawn error: \(e)]" }
+        if limit > 0 && out.count > limit { out = String(out.prefix(limit)) + "\n…(截断)" }
+        return ["command": command, "exit_code": res.exitCode, "stdout": out,
+                "ios_native": true, "runtime_actual": "native-python-file",
+                "hint": "文件类型由内置原生 python3 判定（读魔数），不经 iSH。"]
+    }
 
     /// v6.4.5：python3 解压回退（zipfile/tarfile/gzip）——bsdtar 被 AMFI 拒时使用。
     /// 支持 `unzip <zip> [-d <dir>]` / `tar xf <archive> -C <dir>` / `gunzip <file.gz>`。
