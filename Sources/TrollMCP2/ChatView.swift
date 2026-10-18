@@ -287,7 +287,12 @@ struct ChatView: View {
             AgentsAndSkillsView()
         }
         .sheet(isPresented: Binding(get: { AppUIState.shared.quickFilesPresented }, set: { AppUIState.shared.quickFilesPresented = $0 })) {
-            WorkspaceBrowserView()
+            // v6.4.8：包一层 NavigationView——否则 sheet 内没有导航栏，
+            // 工作区的"完成/上一级/上传/新建"工具栏按钮全都不显示（用户实测）。
+            NavigationView {
+                WorkspaceBrowserView(onClose: { AppUIState.shared.quickFilesPresented = false })
+            }
+            .navigationViewStyle(.stack)
         }
         // v2.9.10：网络恢复 / 回前台提示（配合后台自动重连）
         .onReceive(NotificationCenter.default.publisher(for: AppLifecycleMonitor.networkRestored)) { _ in

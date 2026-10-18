@@ -12,6 +12,11 @@ struct WorkspaceBrowserView: View {
         let name: String
     }
 
+    /// v6.4.8：模态呈现（聊天框的工作区 sheet）时的关闭回调——非 nil 则工具栏显示"完成"按钮。
+    /// 之前聊天框直接用 sheet{ WorkspaceBrowserView() } 且没包 NavigationView →
+    /// 没有导航栏，导致"上一级/上传/新建"都不显示、也没有返回入口（用户实测反馈）。
+    var onClose: (() -> Void)? = nil
+
     @State private var currentPath: String = Workspace.root.path
     @State private var query = ""
     @State private var items: [FileItem] = []
@@ -313,7 +318,10 @@ struct WorkspaceBrowserView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // v6.4.4：返回上一级（面包屑之外给一个显式按钮）
-            ToolbarItem(placement: .navigationBarLeading) {
+            ToolbarItemGroup(placement: .navigationBarLeading) {
+                if let onClose = onClose {
+                    Button("完成") { onClose() }
+                }
                 Button { goUp() } label: { Label("上一级", systemImage: "arrow.up") }
                     .disabled(currentPath == Workspace.root.path)
             }
