@@ -72,7 +72,7 @@ enum L10n {
             "armor_card_body": ["zh": "价格极低，作者本人就在用。通过链接注册会为作者增加 Token 额度，用于持续开发与更新更多功能。感谢支持！", "en": "Extremely low pricing, and it's the station the author personally uses. Registering via the link adds tokens for the author to keep developing and shipping new features. Thanks for your support!"],
             // v2.9.86：关于作者
             "about_title": ["zh": "关于作者", "en": "About Author"],
-            "about_subtitle": ["zh": "ZeenAE · 独立开发者", "en": "ZeenAE · Independent Developer"],
+            "about_subtitle": ["zh": "TrollHax", "en": "TrollHax"],
             "about_bio": ["zh": "一个喜欢折腾 iOS 的独立开发者 🛠️ 相信“手机上就该能搞定一切”。TrollHax 把注入、线上编译、测试、自动化这些原本要电脑 + 越狱才能做的事，全部搬进一台不越狱、只装 TrollStore 的 iPhone 里。持续迭代中，你的每次使用都是这个项目继续更新的动力 💪", "en": "An indie developer who loves tinkering with iOS 🛠️ and believes everything should be doable on a phone. TrollHax brings injection, cloud builds, testing and automation — things that used to need a computer and a jailbreak — into one non-jailbroken iPhone with TrollStore. Iterating constantly; every use of yours keeps this project alive 💪"],
             "about_thanks": ["zh": "开源致谢", "en": "Open Source Credits"],
             "about_thanks_intro": ["zh": "感谢以下开源项目与作者：", "en": "Thanks to these open-source projects & authors:"],

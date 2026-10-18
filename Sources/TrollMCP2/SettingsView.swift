@@ -277,7 +277,7 @@ struct SettingsView: View {
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         var aboutItems: [SettingsItem] = [
             SettingsItem(title: L10n.t("about_title"),
-                         subtitle: "ZeenAE · 独立开发者",
+                         subtitle: "开源致谢 · 安全说明 · 免责声明",
                          icon: "person.crop.circle.fill", color: .blue,
                          destination: AnyView(AboutAuthorView())),
             SettingsItem(title: L10n.t("row_lang"),
