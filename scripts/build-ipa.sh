@@ -156,16 +156,38 @@ if [ -d "Resources/bin" ]; then
             SIGN_TOOL=""
         fi
         if [ -n "$SIGN_TOOL" ]; then
+            # v6.5.3：只给「注入类」工具套特权 entitlements；其余（python3/lua/node/
+            # jq/bsdtar/llvm-*/r2/cstool 等）用**普通 ad-hoc 签名**。
+            # 原因：bin-entitlements.plist 含 platform-application / no-sandbox 等
+            # **平台级权限**，装到 TrollStore 后这些二进制会被其证书重签，权限与被签身份
+            # 不匹配 → AMFI 直接拒执行，表现为 posix_spawn failed: Bad executable
+            # （实测 python3/node/lua/bsdtar 全部如此）。而普通 ad-hoc 签名是助手二进制的常规形态。
+            PRIV_TOOLS="ldid optool insert_dylib ct_bypass fuck_helper sqlite_wipe teamid kfd_helper"
             for t in "$APP"/bin/*; do
                 [ -f "$t" ] || continue
                 case "$t" in *.dylib) continue;; esac
-                if [ "$SIGN_TOOL" = codesign ]; then
-                    codesign -s - -f --entitlements "Support/bin-entitlements.plist" "$t" 2>/dev/null || true
+                base=$(basename "$t")
+                need_priv=0
+                for pt in $PRIV_TOOLS; do
+                    [ "$base" = "$pt" ] && need_priv=1
+                done
+                if [ "$need_priv" = "1" ] && [ -f "Support/bin-entitlements.plist" ]; then
+                    if [ "$SIGN_TOOL" = codesign ]; then
+                        codesign -s - -f --entitlements "Support/bin-entitlements.plist" "$t" 2>/dev/null || true
+                    else
+                        # xerub ldid 语法：-S 后必须紧跟文件名（-Sent.plist）
+                        "$SIGN_TOOL" -S"Support/bin-entitlements.plist" "$t" 2>/dev/null || true
+                    fi
                 else
-                    # xerub ldid 语法：-S 后必须紧跟文件名（-Sent.plist），否则 entitlements 写不进去
-                    "$SIGN_TOOL" -S"Support/bin-entitlements.plist" "$t" 2>/dev/null || true
+                    # 普通 ad-hoc 签名（不带任何特权 entitlements）
+                    if [ "$SIGN_TOOL" = codesign ]; then
+                        codesign -s - -f "$t" 2>/dev/null || true
+                    else
+                        "$SIGN_TOOL" -S "$t" 2>/dev/null || true
+                    fi
                 fi
             done
+            echo ">>> bin 签名完成：特权注入工具 $(echo $PRIV_TOOLS | wc -w | tr -d ' ') 个，其余普通 ad-hoc"
             echo ">>> signed bin tools with no-sandbox entitlements (via $SIGN_TOOL)"
         else
             echo "!!! ldid/codesign not available; bin tools stay sandboxed (injection may fail)" >&2
