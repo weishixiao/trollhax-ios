@@ -169,6 +169,19 @@ final class ShellExecTool: MCPTool {
             // 100% 是 iSH(x86 模拟器) 在 arm64 上段错误——cpu_run_to_interrupt +1204 /
             // poll_wakeup +48 / err_map +180 等，均在后台引擎线程。日常用原生命令即可，
             // 需要 apk/git/完整 tar 时在 设置→安全 手动开启。
+            // v6.3.5：优先用原生 arm64 busybox 执行（无 x86 模拟 → 不闪退）。
+            // busybox 静态单文件内置 sh/tar/gzip/unzip/wget/awk/sed/grep/find/du/sort 等，
+            // 与 App 同沙盒同权限；apk/pip 必须真实 Alpine，不走此路。
+            let alpineOnly = trimmed.hasPrefix("apk ") || trimmed == "apk"
+                || trimmed.hasPrefix("pip ") || trimmed.hasPrefix("pip3 ")
+            if !forceAlpine, !alpineOnly,
+               let bbResult = ShellExecTool.runViaNativeBusybox(trimmed, limit: outLimit, timeout: timeout),
+               bbResult["_busybox_fallback"] == nil {
+                AuditLog.shared.log("shell.exec (native busybox)", detail: String(trimmed.prefix(100)))
+                var r = bbResult
+                r["_busybox_fallback"] = nil
+                return r
+            }
             if !forceAlpine, !UserDefaults.standard.bool(forKey: "alpineEngineEnabled") {
                 return ["command": trimmed, "exit_code": 1, "ios_native": false,
                         "runtime_actual": "ish_disabled",
@@ -739,6 +752,51 @@ final class ShellExecTool: MCPTool {
     /// v6.0.28: 修复假零结果——增加 autoBind 范围检查：路径在 iOS 存在但不在 autoBind 范围内，
     /// 直接拦截报错（原来放行导致 Alpine 读不到文件返回空，AI 误判为 0 字节）。
     /// 复用与 autoBridge 同一套 iOS 路径识别正则，保证护栏与桥接兜底判定一致。
+
+    /// v6.3.5：原生 Alpine 替代——用 arm64 原生 busybox 执行 shell 命令，彻底绕开
+    /// x86 模拟器（iSH 段错误 = 用户 11 次闪退的唯一主因）。busybox 自带 sh/tar/gzip/
+    /// unzip/wget/awk/sed/grep/find/du/sort 等 applet；原生执行零模拟、零闪退，
+    /// 且与 App 同沙盒同权限（可读写同样的路径）。
+    /// 返回 nil 表示 busybox 不可用；返回带 "_busybox_fallback" 表示应回退 iSH
+    /// （applet 缺失等，如 file/git）。
+    static func runViaNativeBusybox(_ command: String, limit: Int, timeout: TimeInterval) -> [String: Any]? {
+        let bb = Bundle.main.bundlePath + "/bin/busybox"
+        guard FileManager.default.isExecutableFile(atPath: bb) else { return nil }
+
+        // Alpine 时代的挂载路径 → iOS 真实路径；/tmp → App 容器 tmp
+        var cmd = alpineToIOSPath(command)
+        let tmpDir = NSTemporaryDirectory()
+        if tmpDir != "/tmp/", cmd.contains("/tmp/") {
+            cmd = cmd.replacingOccurrences(of: "/tmp/", with: tmpDir)
+        }
+        let binDir = Bundle.main.bundlePath + "/bin"
+        let res = BuildRunner.shared.run(executable: bb,
+                                         args: ["sh", "-c", cmd],
+                                         env: ["PATH": binDir + ":/usr/bin:/bin:/usr/sbin:/sbin",
+                                               "HOME": NSHomeDirectory(),
+                                               "LANG": "C.UTF-8"],
+                                         timeout: timeout)
+        var out = res.stdout
+        if !res.stderr.isEmpty {
+            out += (out.isEmpty ? "" : "\n") + res.stderr
+        }
+        if res.timedOut { out += "\n[执行超时 \(Int(timeout))s 被终止]" }
+        if let e = res.spawnError, !e.isEmpty { out += "\n[spawn error: \(e)]" }
+
+        // applet/命令缺失 → 让上层回退（iSH 若开启则走 iSH）
+        let lc = out.lowercased()
+        if res.exitCode == 127 || lc.contains("applet not found") || lc.contains("not found") {
+            return ["_busybox_fallback": true, "stdout": out]
+        }
+
+        if limit > 0 && out.count > limit {
+            let spill = ToolRegistry.spillLarge("busybox", out)
+            out = String(out.prefix(limit / 2)) + "\n…[输出太长 total \(out.count) 字符，完整: \(spill)]…\n" + String(out.suffix(limit / 2))
+        }
+        return ["command": command, "exit_code": res.exitCode, "stdout": out,
+                "ios_native": true, "runtime_actual": "native-busybox",
+                "hint": "原生 arm64 busybox 执行（无 x86 模拟 → 不闪退）：sh/tar/gzip/unzip/wget/awk/sed/grep/find/du/sort/sqlite3 等可用。"]
+    }
 
     /// v6.3.1：判断命令是否含"在 iSH 上极易段错误"的 shell 脚本结构。
     /// 依据 6.3.0 崩溃日志符号化结果（cpu_run_to_interrupt 段错误）：for/while/case、
