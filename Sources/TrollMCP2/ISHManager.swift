@@ -392,6 +392,16 @@ enum ISHEngine {
     /// 未 bind 的 iOS 路径由 autoBridge(字节拷贝) 兜底。
     /// v4.3.75: 新增 onLine 逐行回调（后台读线程触发，调用方负责线程安全）——供安装进度条使用。
     static func exec(_ command: String, timeout: TimeInterval, onLine: ((String) -> Void)? = nil) -> (output: String, exitCode: Int32, timedOut: Bool) {
+        // v6.3.4：iSH 引擎总门控（防闪退）——放在唯一咽喉处，一次覆盖所有调用方
+        // （ShellTool / FileDbTools(file分析,sqlite3) / InstallTools(apk,pip) / AppDecryptTools 等）。
+        // 依据：用户 11 条崩溃日志经 base= 偏移符号化，100% 落在 iSH x86 模拟器内部
+        // （cpu_run_to_interrupt +1204 / poll_wakeup +48 / err_map +180 / task_run_current），
+        // 即 arm64 真机上 iSH 执行时反复段错误 → 整个 App 被系统杀掉。
+        // 默认关闭；设置 → 安全 → 「Alpine/iSH 引擎」可开启（自行承担闪退风险）。
+        if !UserDefaults.standard.bool(forKey: "alpineEngineEnabled") {
+            return ("[iSH 已关闭·防闪退] Alpine/iSH 引擎未启用（实测在 arm64 上执行会段错误闪退）。\n原生替代：ls/cat/grep/find/du/plutil/sqlite3/strings/nm/hexdump/objdump/python3(内置原生)。\n需要 apk add / git / 完整 tar 时：设置 → 安全 → 开启「Alpine/iSH 引擎」后重试。",
+                    127, false)
+        }
         if case .booted = state {} else {
             if let e = ensureBooted() { return (e, -1, false) }
         }
