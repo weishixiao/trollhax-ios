@@ -239,9 +239,28 @@ final class HUDManager {
         let sizeArg = (hudSize >= 170 && hudSize <= 300) ? Int(hudSize) : 200
         let charRaw = UserDefaults.standard.string(forKey: "trollmcp2.girl_character")
         let charArg = GirlCharacter.stored(rawValue: charRaw).iconPrefix
-        if !spawnDetached(bin, args: ["-hud", "-char", charArg, "-size", "\(sizeArg)"]) {
-            lastStartError = "拉起失败 (posix_spawn detach)"
-            appendLog("start FAIL: spawnDetached")
+        // v6.3.8：双候选依次尝试——旧实现只试一个候选就整体失败（用户实测
+        // "拉起失败 (posix_spawn detach)"）。两个候选各试一次：
+        //   ① 主可执行（-hud 双模式；HUD ObjC 核心已链接进主可执行，TrollStore 有效签名）
+        //   ② 旧独立 HUD 二进制（hud/TrollAgentHUD.app/TrollAgentHUD，历史方案，可能被 AMFI 拒）
+        var candidates: [String] = []
+        if let mainExe = Bundle.main.executablePath, FileManager.default.fileExists(atPath: mainExe) {
+            candidates.append(mainExe)
+        }
+        if bin != (Bundle.main.executablePath ?? "") { candidates.append(bin) }
+        let spawnArgs = ["-hud", "-char", charArg, "-size", "\(sizeArg)"]
+        var started = false
+        for cand in candidates {
+            if spawnDetached(cand, args: spawnArgs) {
+                appendLog("start OK (posix_spawn detach) via \(cand)")
+                started = true
+                break
+            }
+            appendLog("start: spawnDetached 失败，候选 \(cand)")
+        }
+        if !started {
+            lastStartError = "拉起失败 (posix_spawn detach)：主可执行与独立 HUD 两个候选均失败（常见原因：容器内二进制签名被 AMFI 拒 / 无 persona 提权权限）"
+            appendLog("start FAIL: 两个候选均 spawnDetached 失败")
             return false
         }
         lastStartError = nil
