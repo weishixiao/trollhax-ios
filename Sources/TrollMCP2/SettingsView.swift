@@ -241,13 +241,9 @@ struct SettingsView: View {
         // 安全
         groups.append(SettingsGroup(header: L10n.t("sec_security"), items: [
             SettingsItem(title: L10n.t("row_audit"),
-                         subtitle: "工具调用 · 成功/失败 · 崩溃日志 · 导出给 AI 查看",
+                         subtitle: "工具调用 · 成功/失败 · 导出给 AI 查看",
                          icon: "list.bullet.rectangle", color: .tmIndigo,
                          destination: AnyView(AuditLogView())),
-            SettingsItem(title: "崩溃日志",
-                         subtitle: "闪退现场 · 异常堆栈 · 一键清空 · 发给开发者调试",
-                         icon: "exclamationmark.triangle", color: .red,
-                         destination: AnyView(CrashLogView())),
             // v6.3.3：Alpine/iSH 引擎开关（默认关闭）——11 条崩溃日志符号化后全部是
             // iSH(x86 模拟器) 在 arm64 真机段错误（cpu_run_to_interrupt / poll_wakeup / err_map）。
             SettingsItem(title: "Alpine/iSH 引擎",
@@ -256,7 +252,7 @@ struct SettingsView: View {
                          isOn: { UserDefaults.standard.bool(forKey: "alpineEngineEnabled") },
                          onToggle: { UserDefaults.standard.set($0, forKey: "alpineEngineEnabled") }),
             SettingsItem(title: "重置所有数据",
-                         subtitle: "清空配置 · 会话 · 工作区 · Keychain · 崩溃日志（恢复到全新安装）",
+                         subtitle: "清空配置 · 会话 · 工作区 · Keychain（恢复到全新安装）",
                          icon: "arrow.counterclockwise.circle.fill", color: .red,
                          action: { showResetAlert = true }),
             SettingsItem(title: L10n.t("row_workspace"),
@@ -343,7 +339,7 @@ struct SettingsView: View {
                 resetAllData()
             }
         } message: {
-            Text("将清空：模型配置、API Key、会话记录、工作区文件、知识库、崩溃日志。此操作不可撤销！")
+            Text("将清空：模型配置、API Key、会话记录、工作区文件、知识库。此操作不可撤销！")
         }
         // v4.3.30：更新镜像源编辑（GitHub 被墙时的备用通道，每行一个前缀，逗号分隔）
         .sheet(isPresented: $showMirrorEditor) {
