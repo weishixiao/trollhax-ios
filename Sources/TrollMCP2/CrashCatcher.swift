@@ -160,6 +160,16 @@ enum CrashCatcher {
         strcpy(m, " base=")
         m += 6
         m = appendHex(m, UInt(bitPattern: sigImageBase))
+        // v6.6.0：写出构建版本与引擎开关状态（排障关键：区分构建代次 / 是否开了 iSH）
+        strcpy(m, " ver=")
+        m += 5
+        if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+            for ch in v.utf8 { m[0] = CChar(ch); m += 1 }
+        }
+        strcpy(m, " ish=")
+        m += 5
+        m[0] = UserDefaults.standard.bool(forKey: "alpineEngineEnabled") ? 49 : 48  // '1'/'0'
+        m += 1
         strcpy(m, " ")
         m += 1
         m = appendInt(m, ts)

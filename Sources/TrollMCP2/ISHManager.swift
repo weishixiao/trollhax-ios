@@ -275,6 +275,7 @@ enum ISHEngine {
         case .idle:
             break
         }
+        cish_install_crash_handler()   // v6.6.0：引擎线程崩溃恢复
         state = .booting
 
         // 1. rootfs 解压（首次）
@@ -409,6 +410,11 @@ enum ISHEngine {
            let iso = TrollishRunner.runIsolated(command, timeout: timeout) {
             ShellDiag.log("ish exec (isolated child): \(command.prefix(80)) crashed=\(iso.crashed)")
             return (iso.output, iso.exitCode, false)
+        }
+        // v6.6.0：引擎线程崩溃恢复已装（wrapper.c：SIGSEGV 落在 libish 区只终止该线程）；
+        // 一旦引擎崩溃过，拒绝再次进入（防重复触发），提示重启 App 恢复
+        if cish_engine_broken() {
+            return ("[iSH] 引擎此前已崩溃（已隔离，App 未受影响）。请重启 App 后再试；期间请用原生命令（find/du/plutil/bsdtar/python3）。", -1, false)
         }
         if case .booted = state {} else {
             if let e = ensureBooted() { return (e, -1, false) }
