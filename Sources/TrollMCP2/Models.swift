@@ -1091,9 +1091,9 @@ final class ConversationStore: ObservableObject {
                     self.appendToCurrent(msg)
                 }
                 self.streamDeltaBuffer += delta
-                // v6.5.4：流式有活动 → 后台保活（有限后台任务 + 静音音频，切后台继续接收）
-                BackgroundKeepAlive.start()
-                BackgroundKeepAlive.poke()
+                // v6.5.4：流式有活动 → 后台保活（复用 AppTools 的 BackgroundKeepAlive.shared：
+                // 静音音频 + BGTask 双保险，切后台继续接收 AI 回复）
+                BackgroundKeepAlive.shared.start()
                 self.scheduleStreamFlush()
             }
         }, onThinking: { delta in
@@ -1136,8 +1136,8 @@ final class ConversationStore: ObservableObject {
             } else {
                 DispatchQueue.main.sync { self.flushStreamBuffers() }
             }
-            // v6.5.4：流式结束 → 停后台保活（有限后台任务 + 静音音频）
-            BackgroundKeepAlive.stop()
+            // v6.5.4：流式结束 → 停后台保活
+            BackgroundKeepAlive.shared.stop()
             DispatchQueue.main.async {
                 self.statusText = nil
                 switch result {
