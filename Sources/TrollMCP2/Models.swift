@@ -687,6 +687,10 @@ final class ConversationStore: ObservableObject {
     /// @Published conversations → 整页消息列表重渲染，长输出时主线程每秒重绘上百次 → 会话页卡顿。
     /// 改为：delta 先进缓冲，80ms 合并 flush 一次（更新频率降一个数量级），
     /// completion 入口强制 flush 保证尾部不丢。thinkBuffer 仍即时累加（toolCalls 装配依赖）。
+    // v6.5.7：自我批判精炼（Self-Refine）状态（OpenManus/DeepResearch 同款机制）
+    private var refineInFlight = false
+    private var didRefineThisMessage = false
+
     private var streamDeltaBuffer = ""
     private var streamThinkBuffer = ""
     private var streamFlushScheduled = false
@@ -700,6 +704,31 @@ final class ConversationStore: ObservableObject {
             self?.flushStreamBuffers()
         }
     }
+    /// v6.5.7：自我批判精炼——发一轮"批判并改进"，精炼版追加到原消息末尾。
+    /// 触发条件：thinkEnabled + 原回答>120字 + 无工具轮 + 每消息一次。
+    private func autoRefine(originalAnswer: String, appendTo sid: UUID) {
+        guard let cfg = modelStore.defaultConfig else {
+            refineInFlight = false
+            return
+        }
+        let prompt = "对上一轮的回答做自我批判并改进：1) 指出逻辑错误、遗漏或可简化处；2) 若原回答已足够好，直接回复”原回答已完善”即可，不要强行改写；3) 若需改进，给出完整、准确、更有深度的最终回答。\n\n原回答：\n\(originalAnswer.prefix(6000))"
+        let msgs = [ChatMessage(role: "user", content: prompt)]
+        let client = OpenAIClient(config: cfg)
+        client.send(messages: msgs, tools: nil, onStatus: { _ in }, onDelta: { _ in }, onThinking: { _ in }) { [weak self] result in
+            guard let self = self else { return }
+            self.refineInFlight = false
+            guard case .success(.text(let newText, _)) = result,
+                  !newText.contains("原回答已完善"), !newText.isEmpty else { return }
+            let improved = "\n\n━━━\n🔍 精炼版（自我批判改进）\n\n" + newText
+            DispatchQueue.main.async {
+                if let ci = self.activeConvIndex,
+                   let mi = self.conversations[ci].messages.firstIndex(where: { $0.id == sid }) {
+                    self.conversations[ci].messages[mi].content += improved
+                }
+            }
+        }
+    }
+
     func flushStreamBuffers() {
         streamFlushScheduled = false
         let dBuf = streamDeltaBuffer
@@ -867,6 +896,8 @@ final class ConversationStore: ObservableObject {
               reasoningLevel: Int = 0, smartSearch: Bool = true) {
         // v2.9.97：记住最近使用的模型，顶栏/下次启动立即恢复
         ModelStore.shared.markUsed(config.id.uuidString)
+        refineInFlight = false
+        didRefineThisMessage = false
         // v2.9.82：请求开始——首次要通知权限 + 开启后台任务延长
         TaskNotify.shared.requestPermissionIfNeeded()
         TaskNotify.shared.beginBackground()
@@ -1180,6 +1211,13 @@ final class ConversationStore: ObservableObject {
                         }
                         self.attachTrail(to: sid, thinking: thinking)
                         self.streamingMessageId = nil
+                        // v6.5.7：自我批判精炼——深度思考开、答案足够长、本轮未精炼过 → 追加一轮"批判→改进"
+                        if self.thinkEnabled, !self.refineInFlight, !self.didRefineThisMessage,
+                           text.count > 120 {
+                            self.didRefineThisMessage = true
+                            self.refineInFlight = true
+                            self.autoRefine(originalAnswer: text, appendTo: sid)
+                        }
                     } else {
                         // v3.5.16：修复"思考显示两次"——流式中 onThinking 可能已建了一条"空正文+思考"消息
                         // (思考先于正文到、且正文没进它），此时若直接 appendToCurrent 会再建第二条
