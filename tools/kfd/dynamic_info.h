@@ -1,6 +1,6 @@
 /*
  * dynamic_info.h — kfd kern_versions[] 现成偏移表（kopen 建立内核读写原语用）
- * 供 TrollAgent kfd_helper 编译时覆盖 felix-pb/kfd 的 libkfd/info/dynamic_info.h。
+ * 供 TrollHax kfd_helper 编译时覆盖 felix-pb/kfd 的 libkfd/info/dynamic_info.h。
  *
  * 组成（全部为现成开源数据，非真机实测）:
  *   - iOS 16.3, A12–A16 (xnu-8792.82.2): Lrdsnow/kfd_offsets

@@ -1,4 +1,4 @@
-// TrollAgent 原生 Python CLI (v4.4.9-fix3cg)
+// TrollHax 原生 Python CLI (v4.4.9-fix3cg)
 // 嵌入式 CPython 入口：链接 App 内置 Python.framework，PYTHONHOME 指向 App bundle/python/。
 // 用法：python3 [-c code | -m module | script.py | 无参(打印版本/帮助)]
 // 编译：xcrun -sdk iphoneos clang -arch arm64 -isysroot $SDK -I<Framework>/Headers
@@ -26,10 +26,10 @@ static void diag(const char *msg) {
 // iOS 上 argv[0] 通常是完整路径；同时兼容相对路径兜底（用 cwd 拼）。
 static void derive_bundle(const char *argv0, char *buf, size_t size) {
     // posix_spawn 调用时 argv[0] 为绝对路径（BuildRunner 传完整 executable 路径）
-    snprintf(buf, size, "%s", (argv0 && argv0[0]) ? argv0 : "/var/mobile/Documents/Workspace/TrollAgent.app");
+    snprintf(buf, size, "%s", (argv0 && argv0[0]) ? argv0 : "/var/mobile/Documents/Workspace/TrollHax.app");
     // 去掉文件名和 bin 目录两级
-    char *p = strrchr(buf, '/'); if (p) *p = '\0';  // .../TrollAgent.app/bin
-    p = strrchr(buf, '/'); if (p) *p = '\0';        // .../TrollAgent.app
+    char *p = strrchr(buf, '/'); if (p) *p = '\0';  // .../TrollHax.app/bin
+    p = strrchr(buf, '/'); if (p) *p = '\0';        // .../TrollHax.app
 }
 
 int main(int argc, char **argv) {
@@ -178,7 +178,7 @@ int main(int argc, char **argv) {
         // 无参数：打印可用性 + 简短说明（iOS 无交互 REPL）
         rc = PyRun_SimpleString(
             "import sys\n"
-            "print('TrollAgent native Python', sys.version.split()[0], '(iOS arm64)')\n"
+            "print('TrollHax native Python', sys.version.split()[0], '(iOS arm64)')\n"
             "print('usage: python3 -c <code> | -m <module> | <script.py>')\n");
         diag(rc == 0 ? "usage PyRun ok" : "usage PyRun FAIL");
     }

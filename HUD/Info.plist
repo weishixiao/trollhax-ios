@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>可爱助手</string>
 	<key>CFBundleExecutable</key>
-	<string>TrollAgentHUD</string>
+	<string>TrollHaxHUD</string>
 	<key>CFBundleIdentifier</key>
 	<string>ch.xxtou.hudapp</string>
 	<key>CFBundleInfoDictionaryVersion</key>

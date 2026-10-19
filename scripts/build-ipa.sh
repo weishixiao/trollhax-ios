@@ -1,6 +1,6 @@
 #!/bin/bash
-# TrollAgent 骨架 IPA 构建脚本（macOS runner / 本地 Mac 均可）
-# 产物：ldid ad-hoc 签名 + 特权 entitlements 注入的 TrollAgent.ipa —— TrollStore 安装时直接继承
+# TrollHax 骨架 IPA 构建脚本（macOS runner / 本地 Mac 均可）
+# 产物：ldid ad-hoc 签名 + 特权 entitlements 注入的 TrollHax.ipa —— TrollStore 安装时直接继承
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -36,45 +36,45 @@ echo ">>> building libHUD.a (desktop floating HUD core)"
 bash scripts/build-hud.sh
 
 # v2.9.249: 部署目标 16→15 治本——按 ios16 编译会引用 iOS16+ 符号(URLRequest.httpMethod/timeoutInterval 等 availability 标注错误的 Swift setter),iOS 15.6 dyld 启动崩;降到 ios14 后编译器自动避免 iOS16+ API
-# v4.3.54: 双架构（arm64 + arm64e）——TrollAgent 纯 arm64 在 A12+(arm64e 芯片)
+# v4.3.54: 双架构（arm64 + arm64e）——TrollHax 纯 arm64 在 A12+(arm64e 芯片)
 # 设备上以兼容模式运行，MobileIcons/CoreImage 在 compat 模式下处理图标异常 →
 # 分享面板 LICreateIconForImages SIGSEGV（与 TrollFools 双架构原生运行对比）。
 echo ">>> swift build (arm64-apple-ios15.0, release)"
-# fix3cy18: --product TrollAgent——只构建主 app；VpnTunnel appex 由下方 P1 专属段构建
+# fix3cy18: --product TrollHax——只构建主 app；VpnTunnel appex 由下方 P1 专属段构建
 #   （其链接需要先下载 hev-stage/lib；主 build 不带 product 会连 VpnTunnel 一起编，链接失败）
-swift build -c release --product TrollAgent \
+swift build -c release --product TrollHax \
     -Xswiftc -sdk -Xswiftc "$SDK" \
     -Xswiftc -target -Xswiftc arm64-apple-ios15.0 \
     -Xcc -isysroot -Xcc "$SDK" \
     -Xcc -target -Xcc arm64-apple-ios15.0
 
-BIN=".build/release/TrollAgent"
+BIN=".build/release/TrollHax"
 test -f "$BIN"
-cp "$BIN" /tmp/TrollAgent-arm64 2>/dev/null || cp "$BIN" "$BIN.arm64"
+cp "$BIN" /tmp/TrollHax-arm64 2>/dev/null || cp "$BIN" "$BIN.arm64"
 echo ">>> binary: $(du -h "$BIN" | cut -f1)"
 
 echo ">>> swift build (arm64e-apple-ios15.0, release)"
-swift build -c release --scratch-path .build-arm64e --product TrollAgent \
+swift build -c release --scratch-path .build-arm64e --product TrollHax \
     -Xswiftc -sdk -Xswiftc "$SDK" \
     -Xswiftc -target -Xswiftc arm64e-apple-ios15.0 \
     -Xcc -isysroot -Xcc "$SDK" \
     -Xcc -target -Xcc arm64e-apple-ios15.0 || echo "!!! arm64e build failed"
 
-BIN64E=".build-arm64e/release/TrollAgent"
+BIN64E=".build-arm64e/release/TrollHax"
 if [ -f "$BIN64E" ] && lipo -info "$BIN64E" 2>/dev/null | grep -q "arm64e"; then
     echo ">>> lipo -create (arm64 + arm64e)"
-    lipo -create /tmp/TrollAgent-arm64 "$BIN64E" -output "$BIN" 2>/dev/null || lipo -create "$BIN.arm64" "$BIN64E" -output "$BIN"
+    lipo -create /tmp/TrollHax-arm64 "$BIN64E" -output "$BIN" 2>/dev/null || lipo -create "$BIN.arm64" "$BIN64E" -output "$BIN"
 else
     echo ">>> arm64e unavailable -> fallback arm64 only"
 fi
 lipo -info "$BIN" | head -1
 
-APP="TrollAgent.app"
-IPA="TrollAgent.ipa"
+APP="TrollHax.app"
+IPA="TrollHax.ipa"
 rm -rf "$APP" Payload "$IPA"
 mkdir -p "$APP"
 
-cp "$BIN" "$APP/TrollAgent"
+cp "$BIN" "$APP/TrollHax"
 cp Support/Info.plist "$APP/Info.plist"
 
 # v2.9.133: 版本注入——CI 传 RELEASE_VERSION 时覆盖产物版本，
@@ -196,7 +196,7 @@ if [ -d "Resources/bin" ]; then
 fi
 
 # v4.5.2：桌面悬浮 HUD 已改为【单可执行双模式】——HUD ObjC 核心编成 libHUD.a 直接链接进主可执行
-#（见上方 build-hud.sh + Package.swift），不再打进独立 TrollAgentHUD 二进制（假签名被 AMFI 106/109 拒，
+#（见上方 build-hud.sh + Package.swift），不再打进独立 TrollHaxHUD 二进制（假签名被 AMFI 106/109 拒，
 # 已废弃）。主可执行被 TrollStore 有效签名，-hud 复用有效签名 → 悬浮进程 AMFI 放行。
 
 # v4.4.4: 原生 Python 集成（CPython 3.14 iOS, PEP 730）。
@@ -527,7 +527,7 @@ if [ -d "$APP/python/lib/python3.14" ]; then
     echo ">>> python after slim: $(du -sh "$APP/python" | cut -f1)"
 fi
 
-if [ -f "Support/TrollAgent.entitlements" ]; then
+if [ -f "Support/TrollHax.entitlements" ]; then
     echo ">>> ldid sign main binary with entitlements"
     # CI 已 brew install ldid；优先用 macOS 原生 ldid（xerub ldid 对 iOS arm64e 兼容最好）
     LDID="$(command -v ldid || true)"
@@ -535,10 +535,10 @@ if [ -f "Support/TrollAgent.entitlements" ]; then
         echo "!!! ldid not available; cannot inject entitlements" >&2
         exit 1
     fi
-    "$LDID" -S"Support/TrollAgent.entitlements" "$APP/TrollAgent"
+    "$LDID" -S"Support/TrollHax.entitlements" "$APP/TrollHax"
     echo ">>> signed main binary with ldid"
 else
-    echo "!!! Support/TrollAgent.entitlements missing" >&2
+    echo "!!! Support/TrollHax.entitlements missing" >&2
     exit 1
 fi
 
@@ -550,5 +550,5 @@ echo ">>> built: $IPA ($(du -h "$IPA" | cut -f1))"
 
 # v2.9.206: 同时输出 TrollStore 原生 .tipa（TrollDecrypt/TrollFools 同款格式，
 # TrollStore 对自家格式签名/entitlements 处理最完整）。tipa 即 zip（内含 Payload）。
-cp "$IPA" TrollAgent.tipa
-echo ">>> built: TrollAgent.tipa ($(du -h "TrollAgent.tipa" | cut -f1))"
+cp "$IPA" TrollHax.tipa
+echo ">>> built: TrollHax.tipa ($(du -h "TrollHax.tipa" | cut -f1))"

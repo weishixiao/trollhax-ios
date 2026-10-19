@@ -5,7 +5,7 @@ import UIKit
 /// 入口：设置 → 可爱助手 → 可爱助手角色
 struct GirlCharacterPickerView: View {
     @ObservedObject private var companion = GirlCompanion.shared
-    // v6.1.5-3：与 HUD 进程共享快捷菜单数据（App Group）——主 App 与 TrollAgentHUD 是独立进程，
+    // v6.1.5-3：与 HUD 进程共享快捷菜单数据（App Group）——主 App 与 TrollHaxHUD 是独立进程，
     // standardUserDefaults 是各自沙盒域，之前 HUD 读不到 fanMenuApps → 自定义 app 不进菜单
     private static let prefs: UserDefaults = UserDefaults(suiteName: "group.com.ai.iosxcode") ?? .standard
     // v6.1.5-7：统一保存入口——双写(suite+standard) + 强制落盘 + 写后读回验证，诊断记入 fanMenuDiag

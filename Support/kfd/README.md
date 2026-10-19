@@ -2,7 +2,7 @@
 
 ## 要解决的问题
 
-TrollAgent 用 TrollStore 假签名装好、主 App 能跑，但 **packet-tunnel 扩展被 NECP 校验拦下**（CS_VALID 过不了假签名），表现为 `NEVPNErrorConfigurationInvalid`，system VPN 连不上、设置里也开不了。
+TrollHax 用 TrollStore 假签名装好、主 App 能跑，但 **packet-tunnel 扩展被 NECP 校验拦下**（CS_VALID 过不了假签名），表现为 `NEVPNErrorConfigurationInvalid`，system VPN 连不上、设置里也开不了。
 
 审计"fuck巨魔工具箱"（同为 TrollStore 装的 .tipa，能真连抓包 VPN）后确认其机制：
 
@@ -15,7 +15,7 @@ TrollAgent 用 TrollStore 假签名装好、主 App 能跑，但 **packet-tunnel
 ## 统一架构（一套代码跨版本）
 
 ```
-TrollAgent 主 App（共用层：聊天/MCP/抓包/解析）
+TrollHax 主 App（共用层：聊天/MCP/抓包/解析）
         │
         ▼  起 VPN 前
 TrustEnabler.resolvePath()
@@ -81,14 +81,14 @@ CI 的 macOS runner 会自动跑 `tools/build_kfd_helper.sh` 把 `kfd_helper`（
 ## 验证方法（改完后真机）
 
 1. `bash tools/build_kfd_helper.sh` 编译通过，`file Resources/bin/kfd_helper` 显示 arm64；`file Resources/bin/fuck_helper` 显示 arm64
-2. 装 TrollAgent → 起 VPN → 看日志 `/var/mobile/Documents/kfd_helper.log`：
+2. 装 TrollHax → 起 VPN → 看日志 `/var/mobile/Documents/kfd_helper.log`：
    - 应有 `extracted cdhash=...`、`invoking .../fuck_helper ...`、`fuck_helper exit=0`
    - FuckKfdHelper 自身日志（NSLog/printf）也会进同一文件
-3. **硬标准**：设置→VPN 出现"TrollAgent 抓包 VPN"、能开、状态栏出现**钥匙图标**
+3. **硬标准**：设置→VPN 出现"TrollHax 抓包 VPN"、能开、状态栏出现**钥匙图标**
    （App 内显示"已连接"不算，那可能只是假成功）
 4. 若注入失败（日志 kopen failed / fuck_helper exit 非 0），确认设备 iOS 在 15.5–16.6.1、且非越狱
 
 ## 安全边界
 
-kfd 是公开开源的内核利用库，本方案仅用于**用户自有设备**上让 TrollAgent
+kfd 是公开开源的内核利用库，本方案仅用于**用户自有设备**上让 TrollHax
 自身的抓包 VPN 正常工作，属自有设备调试/逆向开发，不涉及他人系统。

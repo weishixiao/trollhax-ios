@@ -3,7 +3,7 @@
 //   表：
 //     capture_task    —— 抓包任务(每次 VPN 启动一条)：start_time / rule_name / status
 //     capture_session —— 每条流量：task_id / proto / host / port / upload_bytes / download_bytes / start_time / end_time
-//   变更通知：CFNotificationCenter(Darwin) 广播 com.trollagent.app.db.changed，主 App 可监听刷新 UI。
+//   变更通知：CFNotificationCenter(Darwin) 广播 com.trollhax.app.db.changed，主 App 可监听刷新 UI。
 //
 //   【安全设计】绝不影响转发：
 //     1. 所有 DB 操作走独立后台串行队列(dbQueue)，不在转发热路径上；
@@ -101,7 +101,7 @@ final class CaptureDB {
             // 变更通知：主 App 可 CFNotificationCenterGetDarwinNotifyCenter 监听刷新
             CFNotificationCenterPostNotification(
                 CFNotificationCenterGetDarwinNotifyCenter(),
-                CFNotificationName("com.trollagent.app.db.changed" as CFString), nil, nil, true)
+                CFNotificationName("com.trollhax.app.db.changed" as CFString), nil, nil, true)
         }
     }
 

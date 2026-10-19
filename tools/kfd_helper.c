@@ -1,5 +1,5 @@
 /* ============================================================================
- * kfd_helper.c — TrollAgent 免越狱信任注入 helper (iOS 16.x) — 胶水版 v3.6.18
+ * kfd_helper.c — TrollHax 免越狱信任注入 helper (iOS 16.x) — 胶水版 v3.6.18
  *
  * 目标: 在 TrollStore 假签名、非越狱环境下，让 NECP 认可 packet-tunnel 扩展，
  *       使 system VPN 真连。

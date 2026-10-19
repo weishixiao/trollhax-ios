@@ -32,7 +32,7 @@ targets:
       - path: Mitm/MitmC.c
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.trollagent.app.VpnTunnel
+        PRODUCT_BUNDLE_IDENTIFIER: com.trollhax.app.VpnTunnel
         INFOPLIST_FILE: Sources/VpnTunnel/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
         SKIP_INSTALL: YES

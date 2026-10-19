@@ -1885,7 +1885,7 @@ final class InjectionManager {
 
         // 2. 主二进制路径 & 文件权限
         let mainBundlePath = Bundle.main.bundlePath
-        let mainBundleBin = Bundle.main.executablePath ?? (mainBundlePath + "/TrollAgent")
+        let mainBundleBin = Bundle.main.executablePath ?? (mainBundlePath + "/TrollHax")
         result["main_bundle"] = mainBundlePath
         result["main_bin"] = mainBundleBin
 
@@ -2019,7 +2019,7 @@ final class InjectionManager {
         if !hasPersonaMgmt {
             severity = "critical"
             diagnosis.append("[A CRITICAL] TrollHax 主二进制缺 com.apple.private.persona-mgmt entitlement")
-            diagnosis.append("    → 原因1: build-ipa.sh 的 ldid -S Support/TrollAgent.entitlements 步骤未生效")
+            diagnosis.append("    → 原因1: build-ipa.sh 的 ldid -S Support/TrollHax.entitlements 步骤未生效")
             diagnosis.append("    → 原因2: TrollStore 安装时未保留特权 entitlements (可能 TrollStore 版本过旧)")
             diagnosis.append("    → 修复: 检查 scripts/build-ipa.sh 的签名段；确认 TrollStore ≥ 1.1.1；卸载重装 TrollHax")
         }

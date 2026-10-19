@@ -61,7 +61,7 @@ final class HUDManager {
     /// （早期即被 AMFI 拒），开关无法开启；独立 HUD 由 TrollStore 随主 App 重签可正常启动）。
     /// 数据/点击问题改由"全局文件数据通道 + 点击三保险"解决，不再依赖 HUD 的 App Group 权限。
     var hudBinaryPath: String? {
-        let hudApp = Bundle.main.bundlePath + "/hud/TrollAgentHUD.app/TrollAgentHUD"
+        let hudApp = Bundle.main.bundlePath + "/hud/TrollHaxHUD.app/TrollHaxHUD"
         if FileManager.default.fileExists(atPath: hudApp) { return hudApp }
         let p = Bundle.main.executablePath ?? ""
         return FileManager.default.fileExists(atPath: p) ? p : nil
@@ -135,7 +135,7 @@ final class HUDManager {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: "/var/mobile")
         return docs.appendingPathComponent("hudservices.plist").path
     }
-    private let daemonLabel = "com.trollagent.hudservices"
+    private let daemonLabel = "com.trollhax.hudservices"
 
     private func writeDaemonPlist(bin: String) -> Bool {
         let xml = """
@@ -242,7 +242,7 @@ final class HUDManager {
         // v6.3.8：双候选依次尝试——旧实现只试一个候选就整体失败（用户实测
         // "拉起失败 (posix_spawn detach)"）。两个候选各试一次：
         //   ① 主可执行（-hud 双模式；HUD ObjC 核心已链接进主可执行，TrollStore 有效签名）
-        //   ② 旧独立 HUD 二进制（hud/TrollAgentHUD.app/TrollAgentHUD，历史方案，可能被 AMFI 拒）
+        //   ② 旧独立 HUD 二进制（hud/TrollHaxHUD.app/TrollHaxHUD，历史方案，可能被 AMFI 拒）
         var candidates: [String] = []
         if let mainExe = Bundle.main.executablePath, FileManager.default.fileExists(atPath: mainExe) {
             candidates.append(mainExe)
@@ -276,7 +276,7 @@ final class HUDManager {
     func stop() -> Bool {
         // v6.0.8：先 notify_post 让 HUD 自己 _exit(0)——主 App(mobile) -exit 杀不掉 root HUD(EPERM)，
         // 设置开关关、切角色、调尺寸的 stop 都必须走 notify 自杀才关得掉。
-        "com.trollagent.hud.exit".withCString { _notify_post($0) }
+        "com.trollhax.hud.exit".withCString { _notify_post($0) }
         usleep(300_000)
         // 主路径：launchctl unload
         if FileManager.default.fileExists(atPath: daemonPlistPath), let lctl = launchctlBinary {
@@ -295,7 +295,7 @@ final class HUDManager {
     /// 最后轮询确认进程没了，若还存活（pid 陈旧）读 pid 直接 SIGKILL。
     @discardableResult
     func forceStop() -> Bool {
-        "com.trollagent.hud.exit".withCString { _notify_post($0) }
+        "com.trollhax.hud.exit".withCString { _notify_post($0) }
         usleep(300_000)
         _ = stop()
         // 轮询确认（最多 ~2s），若进程仍存活则强杀

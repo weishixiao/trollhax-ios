@@ -1,9 +1,9 @@
 //
 //  HUDMain.mm
-//  TrollAgent
+//  TrollHax
 //
 //  独立 HUD 二进制的 main 入口（方案A：不复用主可执行）。
-//  独立二进制 TrollAgentHUD.app 由 TrollStore 随主 App 重签（签名有效，AMFI 放行），
+//  独立二进制 TrollHaxHUD.app 由 TrollStore 随主 App 重签（签名有效，AMFI 放行），
 //  收到 -hud 时进入悬浮核心 HUDMainStart()（GSInitialize/UIApplicationInitialize/__completeAndRunAsPlugin runloop 常驻）。
 //  参考主 App main() 的 argv 分支，但独立二进制本身就是悬浮载体。
 //

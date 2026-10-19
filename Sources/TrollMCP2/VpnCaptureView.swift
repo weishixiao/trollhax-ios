@@ -256,7 +256,7 @@ struct VpnCaptureView: View {
         // 比"存储到文件再打开"更稳（无沙箱环境下文件 App 打开 profile 不弹安装）。
         let dir = (path as NSString).deletingLastPathComponent
         _ = LocalHttpServer.shared.start(rootDir: dir)
-        let url = URL(string: "http://127.0.0.1:18080/TrollAgentCA.mobileconfig")!
+        let url = URL(string: "http://127.0.0.1:18080/TrollHaxCA.mobileconfig")!
         UIApplication.shared.open(url, options: [:]) { ok in
             if !ok {
                 notice = "打开 Safari 失败，请手动用「文件」App 打开：\(path)"

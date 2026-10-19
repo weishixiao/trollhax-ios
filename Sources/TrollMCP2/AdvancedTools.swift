@@ -1391,7 +1391,7 @@ final class KeychainWipeTool: MCPTool {
                 groups = gs2
             }
         }
-        if groups.isEmpty { groups = ["TROLLTROLL.com.trollagent.app"] }
+        if groups.isEmpty { groups = ["TROLLTROLL.com.trollhax.app"] }
         var deleted = 0
         var failed = 0
         var errors: [String] = []

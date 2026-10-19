@@ -370,7 +370,7 @@ final class BackgroundKeepAlive {
     // iOS 调度允许时周期性唤醒 App，Audio 保活被系统回收后仍有恢复机会。
     // TrollStore 环境不受 BGTask 权限门槛限制，注册即生效。
 
-    static let refreshID = "com.trollagent.refresh"
+    static let refreshID = "com.trollhax.refresh"
 
     static func registerBGTask() {
         guard #available(iOS 13.0, *) else { return }
@@ -403,6 +403,6 @@ final class BackgroundKeepAlive {
 func postKeepAliveNotification(_ on: Bool) {
     UserDefaults.standard.set(on, forKey: "trollagent.keepalive")
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                         CFNotificationName("com.trollagent.keepalive" as CFString),
+                                         CFNotificationName("com.trollhax.keepalive" as CFString),
                                          nil, nil, true)
 }

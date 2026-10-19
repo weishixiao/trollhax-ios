@@ -25,7 +25,7 @@
 ## 下一步
 
 1. 逆向 TheBall 悬浮窗窗口创建 API(accessibility 托管 + windowLevel 具体怎么调)
-2. 抄实现进 TrollAgent：主 App 内创建 accessibility 托管悬浮窗 + 加 UIBackgroundModes processing 保活
+2. 抄实现进 TrollHax：主 App 内创建 accessibility 托管悬浮窗 + 加 UIBackgroundModes processing 保活
 3. 推版真机测
 
 ## 参考资源

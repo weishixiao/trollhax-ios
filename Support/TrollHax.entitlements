@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>application-identifier</key>
-	<string>TROLLTROLL.com.trollagent.app</string>
+	<string>TROLLTROLL.com.trollhax.app</string>
 	<key>checklessPersistentURLTranslation</key>
 	<true/>
 	<key>com.apple.developer.team-identifier</key>
@@ -207,7 +207,7 @@
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>TROLLTROLL.com.trollagent.app</string>
+		<string>TROLLTROLL.com.trollhax.app</string>
 	</array>
 	<key>com.apple.private.xpc.launchd.job-manager</key>
 	<string>com.apple.runningboard</string>

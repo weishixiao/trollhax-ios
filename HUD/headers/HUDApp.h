@@ -1,6 +1,6 @@
 //
 //  HUDApp.h
-//  TrollAgent
+//  TrollHax
 //
 //  单可执行双模式的 C 接口——主 App（Swift）的 main() 按 argv 分支调用。
 //

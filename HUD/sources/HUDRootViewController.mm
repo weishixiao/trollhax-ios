@@ -1,6 +1,6 @@
 //
 //  HUDRootViewController.mm
-//  TrollAgent
+//  TrollHax
 //
 //  悬浮窗内容：粉色萝莉塔小女孩（多帧动画 + 可拖动 + 点击换表情）
 //  最小替代实现，替换 TrollSpeed 自带按钮球 UI。
@@ -1536,10 +1536,10 @@ extern "C" const char *g_hud_char;
 
 - (NSArray *)_readMainAppPrefsFanMenuApps {
     // no-sandbox + platform-application：直接枚举 /var/mobile/Containers/Data/Application/
-    // 找主 App（com.trollagent.app）的偏好 plist 读 fanMenuApps（文件级共享，最可靠）
+    // 找主 App（com.trollhax.app）的偏好 plist 读 fanMenuApps（文件级共享，最可靠）
     NSArray *containers = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:@"/var/mobile/Containers/Data/Application" error:nil];
     for (NSString *cid in containers) {
-        NSString *prefPath = [NSString stringWithFormat:@"/var/mobile/Containers/Data/Application/%@/Library/Preferences/com.trollagent.app.plist", cid];
+        NSString *prefPath = [NSString stringWithFormat:@"/var/mobile/Containers/Data/Application/%@/Library/Preferences/com.trollhax.app.plist", cid];
         if (![[NSFileManager defaultManager] fileExistsAtPath:prefPath]) continue;
         NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:prefPath];
         if (prefs) {

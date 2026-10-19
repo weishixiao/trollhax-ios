@@ -1,4 +1,4 @@
-// CISH — iSH-ARM64 C 包装层（TrollAgent 专用，串行执行语义）
+// CISH — iSH-ARM64 C 包装层（TrollHax 专用，串行执行语义）
 // 参考 OpenMinis（AGPLv3，本文件独立重写，仅复用公开 API 调用方式）：
 //   deps/ISH_INTEGRATION.md、src/ios/iSH/ISHKernel.m、ISHShellExecutor.m
 // 编译宏（由 meson/SPM 提供）：-DGUEST_ARM64=1 -DISH_INTERNAL

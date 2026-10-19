@@ -1,9 +1,9 @@
 // ProbeAgent v1.0 - 运行时类探测引擎（借鉴 ProbeEngine 设计，独立实现）
-// 注入任意 App 后开启 localhost HTTP 服务（端口 4791），TrollAgent 通过 HTTP 探测目标 App 的
+// 注入任意 App 后开启 localhost HTTP 服务（端口 4791），TrollHax 通过 HTTP 探测目标 App 的
 // ObjC 运行时结构：类列表 / 类详情（方法·属性·ivars）/ UserDefaults / 进程信息。
 // 设计原则：纯 objc/runtime + Foundation，零 substrate 依赖，仅监听 localhost。
 //
-// API（TrollAgent 通过 127.0.0.1:4791 调用）：
+// API（TrollHax 通过 127.0.0.1:4791 调用）：
 //   GET /status               → 探测代理状态 + App/iOS/进程信息
 //   GET /probe/classes?prefix=&limit=&offset=
 //                             → 类列表（name/superclass/instanceMethodCount/classMethodCount）

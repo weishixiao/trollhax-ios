@@ -1,6 +1,6 @@
 # v2.9.93 合并版主构建：内置 tweaks 编译（theos）+ IPA 打包一条龙
 # 不再依赖单独 build-tweak workflow（其 runner 启动不稳定）；改 Tweak.x 后直接跑本 workflow 即全量更新。
-name: build-trollmcp2
+name: build-trollhax-ios
 
 # v4.3.30：contents: write 供滚动 Release（多源更新：GitHub 被墙时 App 经 Releases/镜像下载 tipa）
 permissions:
@@ -714,8 +714,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TrollAgent
-          path: TrollAgent.tipa
+          name: TrollHax
+          path: TrollHax.tipa
           if-no-files-found: error
 
       # v4.3.30：发布滚动 Release（固定 tag "latest"）——多源更新用：
@@ -727,11 +727,10 @@ jobs:
           VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Support/Info.plist 2>/dev/null || echo "unknown")
           echo "version=$VER"
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          # v6.6.6：改名 TrollHax；同时保留 TrollAgent.tipa 旧名（兼容已装旧版的自更新探测）
-          cp -f TrollAgent.tipa TrollHax.tipa || true
-          gh release create latest TrollHax.tipa TrollAgent.tipa \
+          # v6.6.7：只上传 TrollHax.tipa（Bundle ID 已改 com.trollhax.app，老用户需卸载重装）
+          gh release create latest TrollHax.tipa \
             --title "TrollHax latest (v${VER})" \
-            --notes "滚动构建（main 分支最新）。供 App 内多源自动更新使用：GitHub 被墙时经镜像前缀或 Releases 直链下载。下载地址：https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/TrollAgent.tipa" || \
+            --notes "滚动构建（main 分支最新）。供 App 内多源自动更新使用：GitHub 被墙时经镜像前缀或 Releases 直链下载。下载地址：https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/TrollHax.tipa" || \
             { echo "RELEASE PUBLISH FAILED (non-fatal)"; exit 0; }
 
   # v4.4.3：原生 ARM64 Python（iOS 版 CPython，PEP 730 官方构建脚本）。

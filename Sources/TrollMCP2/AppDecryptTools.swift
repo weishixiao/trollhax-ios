@@ -388,11 +388,11 @@ final class AppEncryptInfoTool: MCPTool {
 final class AppInjectPackageTool: MCPTool {
     let definition = ToolDefinition(
         name: "app.inject_package",
-        summary: "改包名+注入 dylib+打包+TrollStore 静默安装成独立新 App(不碰原 App)。用于 App Store 原装 App(就地替换无效)。流程: 解压砸壳 ipa → 改 CFBundleIdentifier→new_bundle_id → insert_dylib 给主二进制加 dylib load command → 拷 dylib → 打包 ipa → trollstorehelper 安装。参数: ipa_path(源砸壳 ipa), dylib_path(你的 dylib 绝对路径, 如 MyHook.dylib), new_bundle_id(新包名, 如 com.trollagent.mypatched), new_name(显示名, 可选), auto_install(默认 true)。Example: app inject_package ipa_path:/var/mobile/Documents/Workspace/decrypted/xxx.ipa dylib_path:/var/mobile/Documents/Workspace/MyHook.dylib new_bundle_id:com.trollagent.mypatched",
+        summary: "改包名+注入 dylib+打包+TrollStore 静默安装成独立新 App(不碰原 App)。用于 App Store 原装 App(就地替换无效)。流程: 解压砸壳 ipa → 改 CFBundleIdentifier→new_bundle_id → insert_dylib 给主二进制加 dylib load command → 拷 dylib → 打包 ipa → trollstorehelper 安装。参数: ipa_path(源砸壳 ipa), dylib_path(你的 dylib 绝对路径, 如 MyHook.dylib), new_bundle_id(新包名, 如 com.trollhax.mypatched), new_name(显示名, 可选), auto_install(默认 true)。Example: app inject_package ipa_path:/var/mobile/Documents/Workspace/decrypted/xxx.ipa dylib_path:/var/mobile/Documents/Workspace/MyHook.dylib new_bundle_id:com.trollhax.mypatched",
         parameters: [
             "ipa_path": "源砸壳 ipa 绝对路径 (required)",
             "dylib_path": "要注入的 dylib 绝对路径 (required)",
-            "new_bundle_id": "新包名 (required, 如 com.trollagent.jinx)",
+            "new_bundle_id": "新包名 (required, 如 com.trollhax.jinx)",
             "new_name": "显示名 (可选)",
             "auto_install": "是否 TrollStore 安装 (默认 true)"
         ], verified: true, category: "app_control", prerequisites: ["ipa 与 dylib 路径已存在(先 shell.exec ls 确认)", "new_bundle_id 不要与已装 App 冲突", "TrollStore 已安装(trollstorehelper 可用)"])
