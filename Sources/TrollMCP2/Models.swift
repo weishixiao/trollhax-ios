@@ -898,6 +898,9 @@ final class ConversationStore: ObservableObject {
         ModelStore.shared.markUsed(config.id.uuidString)
         refineInFlight = false
         didRefineThisMessage = false
+        // v6.6.4：请求发出即开后台保活（旧逻辑等首个 delta 才开，
+        // 等待首字期间切后台会被挂起 → "后台任务不继续"）
+        BackgroundKeepAlive.shared.start()
         // v2.9.82：请求开始——首次要通知权限 + 开启后台任务延长
         TaskNotify.shared.requestPermissionIfNeeded()
         TaskNotify.shared.beginBackground()

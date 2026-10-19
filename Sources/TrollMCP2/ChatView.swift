@@ -1601,7 +1601,15 @@ struct MessageBubble: View {
         }
         .onDisappear { stopTypeTimer() }
         .onChange(of: isStreaming) { streaming in
-            if streaming, revealedCount < message.content.count { startTypeTimer() }
+            if streaming, revealedCount < message.content.count {
+                startTypeTimer()
+            } else if !streaming {
+                // v6.6.4：流式结束立即补齐剩余文字。旧行为：forceType 要整轮结束才清，
+                // 期间仍按 prefix(revealedCount) 渲染 → 打字机没跟上就停在半句，
+                // 必须等下一轮输出/重绘才显示全（用户实测）。
+                revealedCount = message.content.count
+                stopTypeTimer()
+            }
         }
         .onChange(of: message.content) { _ in
             if revealedCount < message.content.count { startTypeTimer() }
