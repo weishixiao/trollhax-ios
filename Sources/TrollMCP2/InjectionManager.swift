@@ -243,6 +243,25 @@ final class InjectionManager {
         // 被工具当作第一个参数/第一个源文件：cp 报 "target ... No such file" (把 "cp" 当源）、
         // install_name_tool 把 "install_name_tool" 当命令等，大量注入步骤静默failed (_ = 忽略返回）。
         let result = spawnRootDetailed(bin, args: args, timeout: timeout)
+        // v6.6.7: ENOSYS fallback——persona spawn 被内核拒时（iOS 17+ AMFI 拒绝 persona-mgmt entitlement），
+        // 降级到不带 persona attr 的 posix_spawn，依赖 helper 二进制的 setuid 位由 TrollStore 装上。
+        // 这样即使 persona 链路挂了，只要 TrollStore 版本 ≥ 1.1.1 且 helper 有 setuid 位，仍能提权。
+        if result.code == 85 {
+            let setuidFallback = spawnRootDetailed(bin, args: args, timeout: timeout, usePersona: false)
+            if setuidFallback.code == 0 {
+                return (0, "[setuid fallback OK] " + setuidFallback.output)
+            }
+            // fallback 也失败：返回原 85 + fallback 详细错误，便于用户和 AI 诊断
+            let fbHint: String
+            if setuidFallback.code == 85 {
+                fbHint = " (setuid 位也没被 TrollStore 打上)"
+            } else if setuidFallback.code == 13 {
+                fbHint = " (helper 可执行但无 root 权限——setuid 位缺失或 sandbox 拒绝)"
+            } else {
+                fbHint = " (fallback errno=\(setuidFallback.code))"
+            }
+            return (85, "[spawnRoot 85 ENOSYS] " + fbHint + " " + setuidFallback.diagPrefix + setuidFallback.output)
+        }
         if result.code != 0, name != "ldid", let ldid = binaryPath("ldid") {
             _ = spawnRootDetailed(ldid, args: ["-S", bin], timeout: 30)
             let retry = spawnRootDetailed(bin, args: args, timeout: timeout)
@@ -414,9 +433,13 @@ final class InjectionManager {
         } else if diag.contains("Failed to find main thread") || diag.contains("task port") {
             reason = "opainject 获取 task port failed"
             advice = "目标 App 有反调试/反注入保护 (如聚安全/安全 SDK)，或进程已崩溃。换无防护 App 测试。"
-        } else if diag.contains("EBADARCH") || diag.contains("spawnRoot failed (85)") {
+        } else if diag.contains("EBADARCH") {
             reason = "opainject 架构不兼容"
             advice = "opainject 二进制与 TrollHax 主二进制架构不匹配。检查 Resources/bin/opainject 架构。"
+        } else if diag.contains("spawnRoot failed (85") || diag.contains("ENOSYS") {
+            // v6.6.7: 85 = ENOSYS = persona spawn 被内核拒（不是架构问题）
+            reason = "persona spawn 被内核拒绝 (ENOSYS)"
+            advice = "posix_spawn 返回 85 (ENOSYS)：persona-mgmt entitlement 未生效或被 iOS AMFI 拒绝。用 inject diagnose 看完整链路：① TrollHax 主二进制是否含 com.apple.private.persona-mgmt；② TSRootBinaries helper 的 setuid 位是否被 TrollStore 打上；③ TrollStore 版本是否 ≥ 1.1.1。iOS 17+ 该问题高发——TrollHax 需双架构原生运行 (arm64+arm64e)。已自动尝试 setuid fallback。"
         } else if diag.contains("spawnRoot failed (2)") {
             reason = "/usr/bin/codesign 不存在 (预期)"
             advice = "TrollStore 环境没有 codesign，正常。ct_bypass 应该能替代。"
@@ -512,7 +535,10 @@ final class InjectionManager {
     /// - 超时：默认 60s，超时 SIGKILL → code=-2，调用方可报 [TOOL_TIMEOUT]
     /// - signal/exit 区分：被信号杀死的命令 → signaled=true + signal 号，而非误报 exit code
     /// 保持 v2.9.57 的非阻塞 pipe + DispatchSource 异步读取 + waitpid 同步等待。
-    func spawnRootDetailed(_ path: String, args: [String], timeout: Double = 60) -> SpawnResult {
+    /// v6.6.7: 新增 usePersona 参数——false 时不设置 persona 属性，依赖目标二进制的 setuid 位提权。
+    ///         用于 posix_spawn 返回 85 (ENOSYS) 时的 fallback：iOS 17+ 上 persona spawn 被 AMFI 拒绝时，
+    ///         若 helper 二进制被 TrollStore 打上 setuid 位，走这条路径仍能提权。
+    func spawnRootDetailed(_ path: String, args: [String], timeout: Double = 60, usePersona: Bool = true) -> SpawnResult {
         // v2.9.281：argv[0] 放可执行路径 (posix_spawn 程序名惯例）。之前 argv[0]=args[0]
         // 导致 trollstorehelper 的 main (从 argv[1] 解析 cmd）把命令参数当成命令：
         // install/uninstall/refresh-all 全部假OK返回 0，实际从未执行 (小红书装不上根因）。
@@ -546,12 +572,21 @@ final class InjectionManager {
 
         var attr: posix_spawnattr_t?
         posix_spawnattr_init(&attr)
-        let rPersona = posix_spawnattr_set_persona_np(&attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE)
-        let rUid = posix_spawnattr_set_persona_uid_np(&attr, 0)
-        let rGid = posix_spawnattr_set_persona_gid_np(&attr, 0)
+        // v6.6.7: usePersona=false 时不设置 persona 属性（依赖 helper 二进制的 setuid 位提权）
+        let rPersona: Int32
+        let rUid: Int32
+        let rGid: Int32
+        if usePersona {
+            rPersona = posix_spawnattr_set_persona_np(&attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE)
+            rUid = posix_spawnattr_set_persona_uid_np(&attr, 0)
+            rGid = posix_spawnattr_set_persona_gid_np(&attr, 0)
+        } else {
+            rPersona = -999; rUid = -999; rGid = -999
+        }
         defer { posix_spawnattr_destroy(&attr) }
 
-        let diagPrefix = "[bin-setuid=\(binSetuid) proc-euid=\(geteuid()) persona_r=\(rPersona) uid_r=\(rUid) gid_r=\(rGid)] "
+        let personaFlag = usePersona ? "on" : "off"
+        let diagPrefix = "[bin-setuid=\(binSetuid) proc-euid=\(geteuid()) persona_flag=\(personaFlag) persona_r=\(rPersona) uid_r=\(rUid) gid_r=\(rGid)] "
 
         // 环境变量：继承当前环境 + DISABLE_TWEAKS=1 + PATH
         var envBuilder = [String: String]()
@@ -574,9 +609,30 @@ final class InjectionManager {
         guard spawnStatus == 0 else {
             close(outPipe[0]); close(outPipe[1])
             close(errPipe[0]); close(errPipe[1])
+            // v6.6.7: 加 errno 名字，避免用户看到裸数字 85/13/8 猜谜
+            let errnoName: String
+            switch spawnStatus {
+            case 2:  errnoName = "ENOENT"    // file not found
+            case 8:  errnoName = "ENOEXEC"   // exec format error
+            case 12: errnoName = "ENOMEM"    // out of memory
+            case 13: errnoName = "EACCES"    // permission denied
+            case 14: errnoName = "FAULT"
+            case 22: errnoName = "EINVAL"    // invalid argument
+            case 85: errnoName = "ENOSYS"    // function not implemented (persona spawn rejected by kernel)
+            case 86: errnoName = "ENOTDIR"   // not a directory
+            default: errnoName = "errno=\(spawnStatus)"
+            }
+            let hint: String
+            switch spawnStatus {
+            case 85: hint = " [persona-mgmt 未生效或 AMFI 拒绝；见 inject diagnose]"
+            case 13: hint = " [权限被拒，检查 entitlements 或 setuid 位]"
+            case 2:  hint = " [二进制路径不存在]"
+            case 8:  hint = " [二进制格式不可执行]"
+            default: hint = ""
+            }
             return SpawnResult(code: spawnStatus, stdout: "", stderr: "", timedOut: false,
                                signaled: false, signal: 0,
-                               diagPrefix: diagPrefix + "spawnRoot failed (\(spawnStatus)) ")
+                               diagPrefix: diagPrefix + "spawnRoot failed (\(spawnStatus) \(errnoName))\(hint) ")
         }
 
         close(outPipe[1]); close(errPipe[1])
@@ -1795,6 +1851,249 @@ final class InjectionManager {
         ]
     }
 
+    /// v6.6.7: 完整 root 提权链路诊断（不依赖 spawnRoot，因为 spawnRoot 本身可能已经挂了）。
+    /// 用于判断 spawnRoot failed (85 ENOSYS) 等错误的根因，一键给 TrollHax 用户和 AI 完整报告。
+    /// 归因逻辑：
+    ///   (A) TrollHax 主二进制缺 persona-mgmt entitlement → build-ipa.sh 签名步骤坏了
+    ///   (B) TSRootBinaries helper 的 setuid 位没被 TrollStore 打上 → TrollStore 版本过旧或安装链路坏
+    ///   (C) 前两者都 OK 但仍 ENOSYS → iOS 17+ AMFI 拒绝，需要 TrollHax 双架构原生运行 (arm64+arm64e)
+    func diagnoseRootChain() -> [String: Any] {
+        var result: [String: Any] = [:]
+
+        // 1. 系统信息
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        result["ios_version"] = "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+        result["ios_major"] = v.majorVersion
+
+        var uts = utsname()
+        uname(&uts)
+        let machine = withUnsafeBytes(of: &uts.machine) { rawPtr in
+            String(cString: rawPtr.bindMemory(to: CChar.self).baseAddress!)
+        }
+        result["hw_machine"] = machine
+
+        var procTranslated = false
+        var val: CInt = 0
+        var size = MemoryLayout<CInt>.size
+        if sysctlbyname("sysctl.proc_translated", &val, &size, nil, 0) == 0 {
+            procTranslated = (val != 0)
+        }
+        result["proc_translated"] = procTranslated ? "arm64e (A12+)" : "arm64"
+
+        result["process_name"] = ProcessInfo.processInfo.processName
+        result["main_bundle_id"] = Bundle.main.bundleIdentifier ?? "?"
+
+        // 2. 主二进制路径 & 文件权限
+        let mainBundlePath = Bundle.main.bundlePath
+        let mainBundleBin = Bundle.main.executablePath ?? (mainBundlePath + "/TrollAgent")
+        result["main_bundle"] = mainBundlePath
+        result["main_bin"] = mainBundleBin
+
+        var binInfo: [String: Any] = [:]
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: mainBundleBin) {
+            if let mode = attrs[.posixPermissions] as? Int {
+                binInfo["permissions_octal"] = String(format: "%o", mode & 0o777)
+                binInfo["has_setuid"] = (mode & 0o4000) != 0
+                binInfo["has_executable"] = (mode & 0o111) != 0
+            }
+            if let uid = attrs[.ownerAccountID] as? Int {
+                binInfo["uid"] = uid
+                binInfo["is_root_owned"] = uid == 0
+            }
+            if let gid = attrs[.groupOwnerAccountID] as? Int {
+                binInfo["gid"] = gid
+            }
+            if let size = attrs[.size] as? NSNumber {
+                binInfo["size"] = size.intValue
+            }
+        }
+        result["main_bin_info"] = binInfo
+        result["geteuid"] = geteuid()
+
+        // 3. 主二进制的 entitlements（用普通 spawn 跑 ldid -e，不需要 root）
+        var entitlements: [String: Any] = [:]
+        if let ldid = binaryPath("ldid") {
+            let r = spawn(ldid, args: ["-e", mainBundleBin], timeout: 20)
+            entitlements["exit_code"] = Int(r.0)
+            entitlements["output"] = r.1
+            let keys = [
+                "com.apple.private.persona-mgmt",
+                "com.apple.private.security.no-sandbox",
+                "com.apple.private.security.container-manager",
+                "com.apple.private.MobileContainerManager.allowed",
+                "com.apple.private.mobileinstall.allowedSPI",
+                "com.apple.developer.team-identifier"
+            ]
+            var found: [String: Bool] = [:]
+            for k in keys {
+                found[k] = r.1.contains(k)
+            }
+            entitlements["key_checks"] = found
+            entitlements["has_persona_mgmt"] = found["com.apple.private.persona-mgmt"] ?? false
+            entitlements["has_no_sandbox"] = found["com.apple.private.security.no-sandbox"] ?? false
+            entitlements["has_container_manager"] = found["com.apple.private.security.container-manager"] ?? false
+        } else {
+            entitlements["error"] = "ldid not bundled"
+        }
+        result["main_bin_entitlements"] = entitlements
+
+        // 4. TSRootBinaries 的 setuid 位
+        let tsBinaries = ["insert_dylib", "ldid", "cp", "cp-15", "mv", "mv-15", "rm",
+                          "chown", "mkdir", "ct_bypass", "install_name_tool", "optool",
+                          "opainject", "python3", "lua", "node", "r2", "cstool"]
+        var binSetuid: [String: [String: Any]] = [:]
+        var setuidCount = 0
+        var totalCount = 0
+        for b in tsBinaries {
+            if let p = binaryPath(b) {
+                totalCount += 1
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: p),
+                   let mode = attrs[.posixPermissions] as? Int {
+                    let hasSetuid = (mode & 0o4000) != 0
+                    if hasSetuid { setuidCount += 1 }
+                    var uid = -1
+                    if let u = attrs[.ownerAccountID] as? Int { uid = u }
+                    binSetuid[b] = [
+                        "path": p,
+                        "permissions_octal": String(format: "%o", mode & 0o777),
+                        "has_setuid": hasSetuid,
+                        "uid": uid
+                    ]
+                }
+            }
+        }
+        let setuidSummary = setuidCount == totalCount ? "OK all setuid"
+                           : (setuidCount == 0 ? "FAIL none setuid" : "WARN partial setuid")
+        result["ts_root_binaries"] = [
+            "setuid_count": setuidCount,
+            "total_count": totalCount,
+            "summary": setuidSummary,
+            "details": binSetuid
+        ]
+
+        // 5. 测试 persona spawn（spawnRoot 会失败，但能捕获真实 errno）
+        var spawnTest: [String: Any] = [:]
+        let shPath = "/bin/sh"
+        if FileManager.default.fileExists(atPath: shPath) {
+            let r = spawnRootDetailed(shPath, args: ["-c", "id"], timeout: 10)
+            spawnTest["code"] = Int(r.code)
+            spawnTest["diag_prefix"] = r.diagPrefix
+            spawnTest["stdout"] = r.stdout
+            spawnTest["stderr"] = r.stderr
+        } else {
+            spawnTest["error"] = "/bin/sh not found"
+        }
+        result["spawn_persona_test"] = spawnTest
+
+        // 5b. 测试 setuid fallback（不带 persona attr）
+        var fallbackTest: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: shPath) {
+            let r = spawnRootDetailed(shPath, args: ["-c", "id"], timeout: 10, usePersona: false)
+            fallbackTest["code"] = Int(r.code)
+            fallbackTest["diag_prefix"] = r.diagPrefix
+            fallbackTest["stdout"] = r.stdout
+            fallbackTest["stderr"] = r.stderr
+        }
+        result["spawn_no_persona_test"] = fallbackTest
+
+        // 6. TrollStore 位置探测（尽力而为）
+        var trollPaths: [String] = []
+        let candidatePaths = [
+            "/var/installd/TrollStore.mobileprovision",
+            "/var/jb/usr/lib/TrollStore",
+            "/usr/lib/TrollStore",
+            "/var/installd/iPhoneOS"
+        ]
+        for p in candidatePaths where FileManager.default.fileExists(atPath: p) {
+            trollPaths.append(p)
+        }
+        result["trollstore_paths"] = trollPaths
+
+        // 7. 自动归因
+        var diagnosis: [String] = []
+        var severity: String = "ok"
+
+        let hasPersonaMgmt = entitlements["has_persona_mgmt"] as? Bool ?? false
+        let hasNoSandbox = entitlements["has_no_sandbox"] as? Bool ?? false
+
+        if !hasPersonaMgmt {
+            severity = "critical"
+            diagnosis.append("[A CRITICAL] TrollHax 主二进制缺 com.apple.private.persona-mgmt entitlement")
+            diagnosis.append("    → 原因1: build-ipa.sh 的 ldid -S Support/TrollAgent.entitlements 步骤未生效")
+            diagnosis.append("    → 原因2: TrollStore 安装时未保留特权 entitlements (可能 TrollStore 版本过旧)")
+            diagnosis.append("    → 修复: 检查 scripts/build-ipa.sh 的签名段；确认 TrollStore ≥ 1.1.1；卸载重装 TrollHax")
+        }
+        if hasPersonaMgmt && !hasNoSandbox {
+            if severity != "critical" { severity = "high" }
+            diagnosis.append("[A2 HIGH] TrollHax 主二进制有 persona-mgmt 但缺 no-sandbox (影响 App Bundle 写)")
+        }
+
+        if setuidCount == 0 {
+            if severity != "critical" { severity = "high" }
+            diagnosis.append("[B HIGH] 所有 TSRootBinaries helper 都没有 setuid 位")
+            diagnosis.append("    → TrollStore 未应用 Info.plist TSRootBinaries 声明的 setuid")
+            diagnosis.append("    → setuid fallback 路径不可用；必须走 persona spawn 链路")
+            diagnosis.append("    → 修复: 升级 TrollStore 到 ≥ 1.1.1；卸载重装 TrollHax")
+        } else if setuidCount < totalCount {
+            diagnosis.append("[B WARN] 部分 helper 有 setuid 位 (\(setuidCount)/\(totalCount))——setuid fallback 部分可用")
+        } else if totalCount > 0 {
+            diagnosis.append("[B OK] 所有 helper 都有 setuid 位 (\(setuidCount)/\(totalCount))——setuid fallback 路径可用")
+        }
+
+        if let code = spawnTest["code"] as? Int {
+            if code == 85 {
+                if severity == "ok" { severity = "critical" }
+                diagnosis.append("[C CRITICAL] posix_spawn 返回 85 (ENOSYS)——persona spawn 被内核拒")
+                if hasPersonaMgmt {
+                    diagnosis.append("    → persona-mgmt entitlement 存在但被 iOS \(v.majorVersion).\(v.minorVersion) AMFI 拒绝")
+                    diagnosis.append("    → iOS 17+ 高发：TrollHax 需双架构原生运行 (arm64+arm64e)")
+                    diagnosis.append("    → 检查 TrollHax 主二进制 lipo -info 是否含 arm64e slice")
+                } else {
+                    diagnosis.append("    → persona-mgmt entitlement 不存在 (见 [A])")
+                }
+            } else if code == 0 {
+                if let out = spawnTest["stdout"] as? String, out.contains("uid=0") {
+                    diagnosis.append("[C OK] persona spawn 工作正常，uid=0")
+                } else if let out = spawnTest["stdout"] as? String, !out.isEmpty {
+                    if severity != "critical" { severity = "high" }
+                    diagnosis.append("[C HIGH] spawnRoot 成功但 uid!=0——persona 属性未真正生效")
+                } else {
+                    diagnosis.append("[C WARN] spawnRoot code=0 但空输出，无法确认提权状态")
+                }
+            } else if code == -2 {
+                diagnosis.append("[C WARN] spawnRoot 超时")
+            } else {
+                diagnosis.append("[C INFO] spawnRoot code=\(code)")
+            }
+        }
+
+        // fallback 结果摘要
+        if let fbCode = fallbackTest["code"] as? Int {
+            let fbLine: String
+            if fbCode == 0 {
+                fbLine = "setuid fallback (usePersona=false) 成功，可在 ENOSYS 时自动降级"
+            } else if fbCode == 85 {
+                fbLine = "setuid fallback 也返回 85 (helper 本身也无法 exec)"
+            } else if fbCode == 13 {
+                fbLine = "setuid fallback 返回 13 (EACCES)——helper 无 root 权限，setuid 位缺失或 sandbox 拒绝"
+            } else {
+                fbLine = "setuid fallback code=\(fbCode)"
+            }
+            diagnosis.append("[FALLBACK] \(fbLine)")
+        }
+
+        result["diagnosis"] = diagnosis
+        result["severity"] = severity
+        result["severity_hint"] = severity == "ok"
+            ? "root 提权链路正常，注入类工具可用"
+            : "root 提权链路断裂，注入类工具不可用。按 diagnosis 首条 [A]/[B]/[C] 归因决定修复方向"
+        result["advice"] = severity == "critical"
+            ? "1) 若 [A]: 重跑 scripts/build-ipa.sh 确保 ldid -S 签名带 entitlements; 2) 若 [B]: 升级 TrollStore ≥ 1.1.1 + 卸载重装 TrollHax; 3) 若 [C]: 检查 TrollHax 主二进制是否含 arm64e slice (lipo -info)"
+            : "root 链路正常，无需操作"
+
+        return result
+    }
+
     func status() -> [String: Any] {
         let apps = AppCatalog.list()
         var injectedApps: [[String: Any]] = []
@@ -1811,16 +2110,33 @@ final class InjectionManager {
         }
         // v2.9.58：加入 root 诊断
         let rootDiag = diagnoseRoot()
+        // v6.6.7：完整 root 链路诊断（entitlements + setuid 位 + fallback 测试结果 + 自动归因）
+        let rootChain = diagnoseRootChain()
         let jbStatus = jailbreakStatus()
-        return [
+
+        var result: [String: Any] = [
             "total_apps": apps.count,
             "bundled_tools": availableBinaries(),
             "injected_count": injectedApps.count,
             "injected_apps": injectedApps,
             "root_diagnosis": rootDiag,
-            "jailbreak": jbStatus,
-            "hint": "Use injection.list to find bundle_id + name for specific App."
+            "root_chain": rootChain,
+            "jailbreak": jbStatus
         ]
+
+        // v6.6.7：severity 醒目提示——AI 一眼看到严重度，不用深挖 root_chain
+        let severity = rootChain["severity"] as? String ?? "ok"
+        if severity == "critical" || severity == "high" {
+            let diagLines = rootChain["diagnosis"] as? [String] ?? []
+            let firstLines = diagLines.prefix(2).joined(separator: " | ")
+            result["root_chain_severity"] = severity
+            result["root_chain_summary"] = firstLines
+            result["hint"] = "!! root 提权链路断裂 (\(severity))——注入类工具不可用。root_chain 字段含完整归因和修复建议。Use injection.list to find bundle_id + name for specific App."
+        } else {
+            result["hint"] = "Use injection.list to find bundle_id + name for specific App."
+        }
+
+        return result
     }
 
     /// v3.1.71：单查指定 App 的注入态 (inject status bundle_id:xxx）。
