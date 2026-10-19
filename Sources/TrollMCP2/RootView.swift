@@ -362,9 +362,8 @@ struct ConversationDrawerView: View {
     }
 
     private var bottomWorkbench: some View {
-        // v6.6.7：删除本机环境入口卡片（原按钮打开 DeviceDetectionView sheet，已一并移除）
+        // v6.6.7：删除本机环境入口卡片；设置齿轮移到此界面左边（用户要求）
         HStack(spacing: 12) {
-            Spacer()
             Button(action: {
                 withAnimation { ui.drawerOpen = false }
                 ui.settingsPresented = true
@@ -377,6 +376,7 @@ struct ConversationDrawerView: View {
                     .cornerRadius(14)
                     .contentShape(Rectangle())
             }
+            Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
