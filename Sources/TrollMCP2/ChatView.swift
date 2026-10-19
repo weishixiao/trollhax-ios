@@ -1816,13 +1816,18 @@ struct MessageBubble: View {
             }
             .buttonStyle(.plain)
             if thinkingExpanded {
-                Text(text)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.08))
-                    .cornerRadius(8)
+                // v6.5.6：思考区固定高度 + 内部滚动（对齐 OpenMinis 固定思考区）——
+                // 旧实现文本多长就撑多高，长思考内容让会话页布局越来越卡。
+                ScrollView(.vertical, showsIndicators: true) {
+                    Text(text)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: min(max(CGFloat(text.count) * 0.5, 80), 220))
+                .background(Color.orange.opacity(0.08))
+                .cornerRadius(8)
             }
         }
         .padding(.horizontal, 6)
