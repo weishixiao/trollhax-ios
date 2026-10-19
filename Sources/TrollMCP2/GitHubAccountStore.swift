@@ -469,11 +469,11 @@ final class GitHubAccountStore: ObservableObject {
                 let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 if status == 422, !tw.isEmpty {
                     // 仓库 workflow 未声明 input → 去掉 inputs 再试一次
-                    var req2 = URLRequest(url: URL(string: "\(self.apiBase)/repos/\(self.repoOwner)/\(self.repoName)/actions/workflows/\(workflowId)/dispatches")!, timeoutInterval: 60)
+                    var req2 = URLRequest(url: URL(string: "\(self.apiBase)/repos/\(self.repoOwner)/\(self.repoName)/actions/workflows/\(self.workflowId)/dispatches")!, timeoutInterval: 60)
                     setHTTPMethod("POST", on: &req2)
                     req2.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                     req2.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    req2.httpBody = try? JSONSerialization.data(withJSONObject: ["ref": branch])
+                    req2.httpBody = try? JSONSerialization.data(withJSONObject: ["ref": self.branch])
                     URLSession.shared.dataTask(with: req2) { [weak self] _, r2, _ in
                         let st2 = (r2 as? HTTPURLResponse)?.statusCode ?? 0
                         DispatchQueue.main.async {
