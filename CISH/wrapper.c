@@ -249,18 +249,19 @@ int cish_killpg(long pid, int sig) {
 
 
 // ===== v6.6.0：引擎线程崩溃恢复（等价 iSH main.c in_jit 恢复路径）=====
+#define _XOPEN_SOURCE 700
 // 背景：用户 13/14 条崩溃均为同一签名——引擎模拟线程 SIGSEGV（fault 低 33 位 =
 // frame2 + 0x1360C，同一 gret 跳转）。此前每次命中都被 CrashCatcher raise 掉整个 App。
 // 方案：安装 handler，识别"崩溃 PC 落在 libish 代码区"→ 只 pthread_exit 该引擎线程
 // （进程其余部分存活），并置 cish_engine_broken 标记——后续引擎调用直接报错，
 // 不再进入必然崩溃的代码路径。
 #include <signal.h>
+#include <string.h>
 #include <ucontext.h>
 #include <pthread.h>
 
-// libish 引擎核心符号（链接自 libish.a，符号化已证实存在）
-extern const char cpu_run_to_interrupt;
-extern const char sys_sched_yield;
+// libish 引擎核心符号（cpu_run_to_interrupt / sys_sched_yield）已由
+// ish 头文件声明为函数 —— 直接取地址划定引擎代码区，不在此重复声明。
 
 static volatile int cish_engine_broken_flag = 0;
 static volatile sig_atomic_t cish_handler_installed = 0;
