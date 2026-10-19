@@ -753,10 +753,10 @@ final class LocationExecTool: MCPTool {
 final class GitHubExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "github",
-        summary: "GitHub CI automation. Commands: account_status / trigger_build / fetch_runs / download_artifact. Params: workflow (build-trollmcp2.yml or build-tweak.yml), tweak, ref (default main), run_id (for download_artifact).",
+        summary: "GitHub CI automation. Commands: account_status / trigger_build / fetch_runs / download_artifact. Params: workflow (build-trollhax-ios.yml or build-tweak.yml), tweak, ref (default main), run_id (for download_artifact).",
         parameters: [
             "command": "Subcommand: account_status / trigger_build / fetch_runs / download_artifact",
-            "workflow": "Workflow file for trigger_build: build-trollmcp2.yml (default, build IPA) or build-tweak.yml (build tweak dylib)",
+            "workflow": "Workflow file for trigger_build: build-trollhax-ios.yml (default, build IPA) or build-tweak.yml (build tweak dylib)",
             "tweak": "Only for tweak trigger_build: tweak project name (e.g. ProbeAgent / ConfigHook / NetworkTweak)",
             "ref": "Git branch to build (default main)",
             "run_id": "Run ID (for download_artifact)"

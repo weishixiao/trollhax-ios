@@ -157,7 +157,6 @@ struct ConversationDrawerView: View {
     @ObservedObject private var ui = AppUIState.shared
     @ObservedObject private var probe = DeviceProbe.shared
     @State private var searchText = ""
-    @State private var showDevice = false
     // v2.9.166：deviceReady 改为计算属性直接读 DeviceProbe.shared.lastReport——
     // 旧版 @State 只在 onAppear 读一次：用户点开检测页跑完（全绿）返回后，
     // 左下角仍是旧感叹号，这就是"环境通过了还显示感叹号"的根因。
@@ -182,9 +181,6 @@ struct ConversationDrawerView: View {
         }
         .background(Color(.systemBackground))
         .onAppear(perform: refreshReadiness)
-        .sheet(isPresented: $showDevice) {
-            CompatNav { DeviceDetectionView(showsDismissButton: true) }
-        }
     }
 
     private var header: some View {
@@ -366,39 +362,8 @@ struct ConversationDrawerView: View {
     }
 
     private var bottomWorkbench: some View {
-        // v2.9.10：圆角卡片式底部工具栏（环境入口 + 设置齿轮）
-        // v2.9.76：就绪图标美化——渐变圆环 + 脉冲点 + 波浪扫描
+        // v6.6.7：删除本机环境入口卡片（原按钮打开 DeviceDetectionView sheet，已一并移除）
         HStack(spacing: 12) {
-            Button(action: { showDevice = true }) {
-                HStack(spacing: 10) {
-                    ZStack {
-                        Circle()
-                            .fill((deviceReady == true ? Color.green : Color.orange).opacity(0.14))
-                            .frame(width: 44, height: 44)
-                        Circle()
-                            .stroke(
-                                (deviceReady == true ? Color.green : Color.orange).opacity(0.35),
-                                lineWidth: 2.5
-                            )
-                            .frame(width: 44, height: 44)
-                        Image(systemName: deviceReady == true ? "checkmark" : "exclamationmark")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(deviceReady == true ? .green : .orange)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(readinessText)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(deviceReady == true ? .green : .orange)
-                        Text(failureHint)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
             Spacer()
             Button(action: {
                 withAnimation { ui.drawerOpen = false }

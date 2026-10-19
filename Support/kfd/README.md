@@ -62,7 +62,7 @@ fuck_helper（= Fuck 工具箱的 FuckKfdHelper，已完整逆向其机制）
 | `Resources/bin/fuck_helper` | FuckKfdHelper 注入引擎（arm64，已验证 16.3） |
 | `Sources/TrollMCP2/TrustEnabler.swift` | Swift 探测(越狱/iOS版本/kfd区间) + 路径调度 + posix_spawn |
 | `Sources/TrollMCP2/VpnManager.swift` | `startVpn` 起手调用 `TrustEnabler.injectIfNeeded` |
-| `.github/workflows/build-trollmcp2.yml` | 加 "Build kfd_helper" step（失败不阻塞） |
+| `.github/workflows/build-trollhax-ios.yml` | 加 "Build kfd_helper" step（失败不阻塞） |
 
 ## 编译
 

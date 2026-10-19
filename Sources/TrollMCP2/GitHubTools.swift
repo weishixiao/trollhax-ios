@@ -20,7 +20,7 @@ private enum GHStoreKeys {
 struct GHConfig {
     static var repoOwner: String { UserDefaults.standard.string(forKey: GHStoreKeys.owner) ?? "zrrt" }
     static var repoName: String { UserDefaults.standard.string(forKey: GHStoreKeys.repo) ?? "trollmcp2" }
-    static var workflowId: String { UserDefaults.standard.string(forKey: GHStoreKeys.workflow) ?? "build-trollmcp2.yml" }
+    static var workflowId: String { UserDefaults.standard.string(forKey: GHStoreKeys.workflow) ?? "build-trollhax-ios.yml" }
     static var branch: String { UserDefaults.standard.string(forKey: GHStoreKeys.branch) ?? "main" }
     static var clientID: String { UserDefaults.standard.string(forKey: GHStoreKeys.clientID) ?? "Ov23li890n3hM15edlcw" }
     static var apiBase: String { "https://api.github.com" }
@@ -123,8 +123,8 @@ final class GitHubAccountStatusTool: MCPTool {
 final class GitHubTriggerBuildTool: MCPTool {
     let definition = ToolDefinition(
         name: "github.trigger_build",
-        summary: "Trigger GitHub Actions CI build (compile TrollHax IPA or tweak). Use for: build new version of TrollHax, compile a tweak dylib. Don't use for: run local shell commands (use shell.exec), download files (use fs tools). Prerequisite: GitHub account must be logged in. Example: user says 'build new version' → trigger build-trollmcp2.yml workflow.",
-        parameters: ["workflow": "Workflow file: build-trollmcp2.yml (default, build IPA) or build-tweak.yml (build tweak dylib)", "tweak": "Only for tweak builds: tweak project name (e.g. CompileProbe / ProbeAgent)", "ref": "Git branch to build (default main)"], verified: true, category: "build")
+        summary: "Trigger GitHub Actions CI build (compile TrollHax IPA or tweak). Use for: build new version of TrollHax, compile a tweak dylib. Don't use for: run local shell commands (use shell.exec), download files (use fs tools). Prerequisite: GitHub account must be logged in. Example: user says 'build new version' → trigger build-trollhax-ios.yml workflow.",
+        parameters: ["workflow": "Workflow file: build-trollhax-ios.yml (default, build IPA) or build-tweak.yml (build tweak dylib)", "tweak": "Only for tweak builds: tweak project name (e.g. CompileProbe / ProbeAgent)", "ref": "Git branch to build (default main)"], verified: true, category: "build")
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let token = GHConfig.activeToken else {
             throw MCPError.failed("not logged in to GitHub, log in first in Settings - GitHub Account")

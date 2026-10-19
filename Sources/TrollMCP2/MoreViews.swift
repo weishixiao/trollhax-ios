@@ -9,8 +9,6 @@ struct AuditLogView: View {
     @State private var fileLogText = ""
     @State private var sortOrder: SortOrder = .newest
     @State private var sortBy: SortBy = .time
-    // v6.0.28：崩溃日志tab
-    @State private var crashPaths: [String] = []
     // v4.3.43：Alert 按钮里不再直接 present 分享页（Alert dismiss 转场中 present 会崩溃），
     // 改为先记录待分享路径，等 Alert 完全消失后再由 onChange 触发。
     @State private var pendingSharePath: String?
@@ -29,12 +27,11 @@ struct AuditLogView: View {
             )
             .padding(.vertical, 8)
 
-            // v6.0.28：四 Tab——调用记录 / 健康度（失败归因）/ 文件日志 / 崩溃日志
+            // v6.6.7：三 Tab——调用记录 / 健康度（失败归因）/ 文件日志（原崩溃 tab 已移除）
             Picker("", selection: $tab) {
                 Text(L10n.t("ui_135")).tag(0)
                 Text(L10n.t("ui_29")).tag(1)
                 Text(L10n.t("ui_75")).tag(2)
-                Text("崩溃").tag(3)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
@@ -47,8 +44,6 @@ struct AuditLogView: View {
                 healthView
             } else if tab == 2 {
                 fileLogView
-            } else {
-                crashLogView
             }
         }
         .background(Color(.systemGroupedBackground))
@@ -63,7 +58,7 @@ struct AuditLogView: View {
                 }
             }
         }
-        .onAppear { loadFileLog(); crashPaths = CrashCatcher.list() }
+        .onAppear { loadFileLog() }
         .alert(isPresented: $showExportAlert) {
             // v4.3.43：Alert 按钮只记录待分享路径，等 Alert dismiss 完成后
             // 由 onChange(showExportAlert) 触发分享——避免在 Alert dismiss 转场中
@@ -87,34 +82,6 @@ struct AuditLogView: View {
                 pendingSharePath = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     SharePresenter.present([URL(fileURLWithPath: p)])
-                }
-            }
-        }
-    }
-
-    // v6.0.28：崩溃日志tab
-    private var crashLogView: some View {
-        List {
-            if crashPaths.isEmpty {
-                Section {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.shield")
-                            .foregroundColor(.green)
-                        Text("没有崩溃记录")
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 20)
-                }
-            } else {
-                ForEach(crashPaths, id: \.self) { path in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text((path as NSString).lastPathComponent)
-                            .font(.body)
-                        Text(CrashCatcher.preview(path, maxChars: 100))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                    }
                 }
             }
         }
