@@ -1,6 +1,6 @@
 //
 //  ArchiveTools.swift
-//  TrollAgent — 对齐 TrollFools preprocessAssets 的 zip/deb 解压能力
+//  TrollHax — 对齐 TrollFools preprocessAssets 的 zip/deb 解压能力
 //  纯系统库实现：libz（raw deflate / gzip）+ Compression.framework（bzip2/lzma）+ liblzma dlsym（xz）
 //  + 手写 ZIP/ar/tar 解析
 //

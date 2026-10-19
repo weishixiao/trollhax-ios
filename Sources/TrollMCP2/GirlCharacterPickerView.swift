@@ -24,7 +24,7 @@ struct GirlCharacterPickerView: View {
             try data.write(to: URL(fileURLWithPath: fanMenuSharedFile), options: .atomic)
         } catch {
             // 写失败不阻塞主流程，诊断里可见
-            NSLog("[TrollAgent] fanmenu shared file write FAIL: \(error)")
+            NSLog("[TrollHax] fanmenu shared file write FAIL: \(error)")
         }
         // 写后立即读回验证（暴露 App Group 失效 / 落盘失败）
         let backSuite = (UserDefaults(suiteName: "group.com.ai.iosxcode")?.array(forKey: "fanMenuApps") as? [[String:String]])?.count ?? -1

@@ -77,7 +77,7 @@ final class ControlAgentTools {
                 skipProbe: skipProbe,
                 allowMain: true
             )
-            // v2.9.109：注入OK自动开启真后台保活 (目标 App + TrollAgent 自身），
+            // v2.9.109：注入OK自动开启真后台保活 (目标 App + TrollHax 自身），
             // 防止目标 App 切后台被系统挂起导致 4789 断连
             postKeepAliveNotification(true)
             BackgroundKeepAlive.shared.start()

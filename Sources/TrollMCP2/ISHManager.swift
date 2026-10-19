@@ -2,7 +2,7 @@ import Foundation
 import ZIPFoundation
 import CISH
 
-/// iSH-ARM64 引擎（TrollAgent 版）
+/// iSH-ARM64 引擎（TrollHax 版）
 /// - boot：首次调用时把 bundle 内 alpine-rootfs.zip 解压到 Documents，再 cish_boot 挂载 fakefs
 /// - exec：每次调用在 guest 内 fork 独立 /bin/sh -c，串行执行（全局锁）
 /// - 超时：cish_killpg 回收 guest 进程组，靠 exit_hook 通知管道收尾

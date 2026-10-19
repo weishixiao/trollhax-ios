@@ -31,7 +31,7 @@ final class SystemOverviewTool: MCPTool {
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
 
         return [
-            "system": "TrollAgent",
+            "system": "TrollHax",
             "version": ver,
             "total_tools": names.count,
             "important_note": "The callable tools are the BIG TOOLS below — call them as `name` + `command`/`action` subcommand (e.g. `app` + command:decrypt, `inject` + command:enable). Dotted names like app.decrypt are NOT separate tool names. A few single tools are callable as-is: shell.exec, web.search, web.fetch, network.capture, vpn.capture, skills.read, env.setup_re.",

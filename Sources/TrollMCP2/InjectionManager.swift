@@ -36,7 +36,7 @@ enum MachOAnalyzer {
 
     /// 解析 Mach-O 信息；非 Mach-O 或读取failed返回 nil
     /// v2.9.265：大文件只读头 8MB (fat header + load commands 区足够解析 cryptID/dylibs）——
-    /// 全量 mmap 394MB 主二进制 + 6 个 framework 会压垮 TrollAgent (实测多次断连/被杀）。
+    /// 全量 mmap 394MB 主二进制 + 6 个 framework 会压垮 TrollHax (实测多次断连/被杀）。
     static func analyze(_ path: String) -> Info? {
         let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber
         let total = size?.int64Value ?? 0
@@ -416,7 +416,7 @@ final class InjectionManager {
             advice = "目标 App 有反调试/反注入保护 (如聚安全/安全 SDK)，或进程已崩溃。换无防护 App 测试。"
         } else if diag.contains("EBADARCH") || diag.contains("spawnRoot failed (85)") {
             reason = "opainject 架构不兼容"
-            advice = "opainject 二进制与 TrollAgent 主二进制架构不匹配。检查 Resources/bin/opainject 架构。"
+            advice = "opainject 二进制与 TrollHax 主二进制架构不匹配。检查 Resources/bin/opainject 架构。"
         } else if diag.contains("spawnRoot failed (2)") {
             reason = "/usr/bin/codesign 不存在 (预期)"
             advice = "TrollStore 环境没有 codesign，正常。ct_bypass 应该能替代。"
@@ -703,7 +703,7 @@ final class InjectionManager {
 
     /// 通过扫描二进制内是否含 "ControlAgent" 字符串判断注入状态 (LC_LOAD_DYLIB 名字会被写入）
     /// v2.9.265：只读前 1MB——load commands 区在文件头 64KB 内，全量读 394MB 主二进制的
-    /// Data(contentsOf:) 会压垮 TrollAgent (实测多次内存被杀/断连）。
+    /// Data(contentsOf:) 会压垮 TrollHax (实测多次内存被杀/断连）。
     func isInjected(_ mainBinary: String) -> Bool {
         guard let fh = try? FileHandle(forReadingFrom: URL(fileURLWithPath: mainBinary)) else { return false }
         defer { try? fh.close() }
@@ -793,7 +793,7 @@ final class InjectionManager {
 
     /// 解压内置 CydiaSubstrate.framework.zip → 临时目录，标记 .troll-fools + ct_bypass + chown 33:33 (对齐 prepareSubstrate）
     private func prepareSubstrate() throws -> String {
-        let tmpRoot = NSTemporaryDirectory() + "TrollAgentSubstrate-" + UUID().uuidString
+        let tmpRoot = NSTemporaryDirectory() + "TrollHaxSubstrate-" + UUID().uuidString
         try? FileManager.default.createDirectory(atPath: tmpRoot, withIntermediateDirectories: true)
         let zipPath = Bundle.main.path(forResource: "CydiaSubstrate.framework", ofType: "zip")
             ?? (binDir.deletingLastPathComponent().appendingPathComponent("CydiaSubstrate.framework.zip").path)
@@ -1178,7 +1178,7 @@ final class InjectionManager {
         let agentSrc: String
         let sourceFileName: String
         var preparedAssets: [String] = []
-        let assetTmpRoot = NSTemporaryDirectory() + "TrollAgentAssets-" + UUID().uuidString
+        let assetTmpRoot = NSTemporaryDirectory() + "TrollHaxAssets-" + UUID().uuidString
         if let src = dylibSourcePath, !src.isEmpty {
             guard FileManager.default.fileExists(atPath: src) else {
                 throw MCPError.failed("specified plugin file not found: \(src)")

@@ -148,7 +148,7 @@ struct AboutAuthorView: View {
     private var disclaimerRows: [String] { L10n.t("about_disclaimer_rows").components(separatedBy: "|") }
 
     private func copyFeedback() {
-        let text = "TrollAgent v\(versionLine) · \(deviceLine) · 反馈内容："
+        let text = "TrollHax v\(versionLine) · \(deviceLine) · 反馈内容："
         UIPasteboard.general.string = text
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { copied = false }

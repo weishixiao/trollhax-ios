@@ -110,7 +110,7 @@ enum FailureKind {
             || m.contains("setuid") || m.contains("denied") || m.contains("permission")
             || m.contains("未开启") || m.contains("未生效") {
             return ("ENV_PERMISSION", "environment",
-                    "enable \"Edit Entitlements\" in TrollStore, reinstall TrollAgent, then retry")
+                    "enable \"Edit Entitlements\" in TrollStore, reinstall TrollHax, then retry")
         }
         // 2) 目标：加密 / 架构 / 兼容 / 闪退 / 无法启动 / 不可注入
         if m.contains("加密") || m.contains("cryptid") || m.contains("encrypted")

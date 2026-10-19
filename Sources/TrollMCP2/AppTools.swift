@@ -322,9 +322,9 @@ private func LSAppWorkspaceOpen(bundleId: String) -> Bool {
     return openFn(ws, sel, bundleId as NSString)
 }
 
-// MARK: - v2.9.109 TrollAgent 自身后台保活 (音频静音引擎）
+// MARK: - v2.9.109 TrollHax 自身后台保活 (音频静音引擎）
 // 远程控制/长任务期间自动启动：AVAudioSession playback + 静音源持续输出，
-// TrollAgent 切后台不被系统挂起，AI 可继续调用目标 App 的 4789。
+// TrollHax 切后台不被系统挂起，AI 可继续调用目标 App 的 4789。
 final class BackgroundKeepAlive {
     static let shared = BackgroundKeepAlive()
     private var engine: AVAudioEngine?
@@ -354,7 +354,7 @@ final class BackgroundKeepAlive {
             self.engine = engine
             running = true
         } catch {
-            NSLog("[TrollAgent] BackgroundKeepAlive start failed: %@", error.localizedDescription)
+            NSLog("[TrollHax] BackgroundKeepAlive start failed: %@", error.localizedDescription)
         }
     }
 

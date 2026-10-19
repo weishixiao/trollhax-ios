@@ -390,7 +390,7 @@ final class LocalServerManager {
 final class ServerStartTool: MCPTool {
     let definition = ToolDefinition(
         name: "server.start",
-        summary: "Start the local HTTP server. Use for: enable external tools/scripts to call TrollAgent via REST API. Don't use for: stop server (use server.stop), check server status (use server.status). Example: user says 'start local server' → start server.",
+        summary: "Start the local HTTP server. Use for: enable external tools/scripts to call TrollHax via REST API. Don't use for: stop server (use server.stop), check server status (use server.status). Example: user says 'start local server' → start server.",
         parameters: [
             "port": "Port number (default 8765)"
         ], verified: true, category: "diagnose")

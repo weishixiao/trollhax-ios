@@ -81,7 +81,7 @@ final class VpnTool: MCPTool {
             }
             return ["command": "cert", "mobileconfig": path,
                     "steps": ["open the file with Files app to install profile",
-                              "then Settings → General → About → Certificate Trust Settings → enable Full Trust for TrollAgent MITM CA",
+                              "then Settings → General → About → Certificate Trust Settings → enable Full Trust for TrollHax MITM CA",
                               "then run vpn.capture command:start (or local_start)"]]
 
         case "local_start":

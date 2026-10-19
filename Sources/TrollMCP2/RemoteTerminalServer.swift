@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-/// v2.9.181：远程终端服务器——TrollAgent 自身暴露公网 HTTP API
+/// v2.9.181：远程终端服务器——TrollHax 自身暴露公网 HTTP API
 ///
 /// 监听 0.0.0.0:8790 (可配置），N1 公网 IPv4 端口转发到手机局域网 IP 即可由云端 AI 直连：
 ///   - GET  /api/status     设备/版本/工具数/服务状态
@@ -75,7 +75,7 @@ final class RemoteTerminalServer {
         acceptThread = Thread { [weak self] in self?.acceptLoop() }
         acceptThread?.start()
         // v2.9.183：远程终端开启即自动启动后台保活 (静音音频），
-        // 目标 App 在前台时 TrollAgent 退后台仍保持服务在线，避免 iOS 挂起断线。
+        // 目标 App 在前台时 TrollHax 退后台仍保持服务在线，避免 iOS 挂起断线。
         BackgroundKeepAlive.shared.start()
         return true
     }

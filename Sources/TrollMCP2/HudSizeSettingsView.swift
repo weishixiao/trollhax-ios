@@ -1,6 +1,6 @@
 //
 //  HudSizeSettingsView.swift
-//  TrollAgent
+//  TrollHax
 //
 //  v6.0.7：桌面悬浮小女孩尺寸设置——Slider 调整并写入 UserDefaults（trollagent.hud_size），
 //  由 HUDManager.start() 以 -size N 传给 HUD 进程生效（修改后重启桌面悬浮生效）。

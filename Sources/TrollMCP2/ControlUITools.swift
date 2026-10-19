@@ -143,7 +143,7 @@ final class HIDTouchInjector {
 // 实证：iOS 16.3 侧载环境 RPScreenRecorder 系统级崩溃 (CFRetain SIGTRAP，
 // 崩溃栈 sig_1789582255 / sig_1789588011：ReplayKit frame3 CFRetain+0，信号级无法 try-catch）。
 // 方案：1) 优先 ControlAgent 注入截图 (目标 App 内截自己窗口，零权限零崩溃）
-//       2) 兜底截 TrollAgent 自身窗口 (AI 召唤时可见聊天界面）
+//       2) 兜底截 TrollHax 自身窗口 (AI 召唤时可见聊天界面）
 //       3) 均不可用 → 明确返回降级提示，绝不调用 RPScreenRecorder。
 
 final class ScreenCapture {
@@ -161,7 +161,7 @@ final class ScreenCapture {
             DispatchQueue.main.async { completion(true, path) }
             return
         }
-        // 2) 兜底：截 TrollAgent 自身窗口 (drawViewHierarchy，零权限）
+        // 2) 兜底：截 TrollHax 自身窗口 (drawViewHierarchy，零权限）
         if let window = keyWindow() {
             let format = UIGraphicsImageRendererFormat()
             format.scale = UIScreen.main.scale

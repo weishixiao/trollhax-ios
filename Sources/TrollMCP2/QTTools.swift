@@ -423,7 +423,7 @@ final class LogCollectTool: MCPTool {
         name: "log.collect",
         summary: "Collect app logs and crash reports for debugging. Use for: find out why app crashed, debug injection issues, see error messages. Don't use for: just checking app status (use app.launch to test), packet capture (use network.capture). Example: user says 'why does 小红书 crash' → collect crash logs and analyze.",
         parameters: [
-            "bundle_id": "Target App bundle_id (optional, default TrollAgent's own logs)",
+            "bundle_id": "Target App bundle_id (optional, default TrollHax's own logs)",
             "type": "Log type: system / crash / injection / all (default all)",
             "lines": "Max number of lines to return (default 200)"
         ],
@@ -451,7 +451,7 @@ final class LogCollectTool: MCPTool {
         if type == "all" || type == "crash" {
             let crashDir = NSHomeDirectory().appending("/Library/Logs/CrashReporter")
             if let files = try? FileManager.default.contentsOfDirectory(atPath: crashDir) {
-                let relevant = files.filter { $0.contains(bundleId) || $0.contains("TrollAgent") }
+                let relevant = files.filter { $0.contains(bundleId) || $0.contains("TrollHax") }
                 for file in relevant.prefix(5) {
                     let src = crashDir.appending("/\(file)")
                     let dst = workspace.appending("/crash_\(file)")

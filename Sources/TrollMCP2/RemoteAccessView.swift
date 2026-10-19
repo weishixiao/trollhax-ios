@@ -25,7 +25,7 @@ struct RemoteAccessView: View {
                 }
             }
 
-            Section(header: Text("被远程控制"), footer: Text("TrollAgent 开启 HTTP API，云端/远程可直接调用工具、读审计、查崩溃")) {
+            Section(header: Text("被远程控制"), footer: Text("TrollHax 开启 HTTP API，云端/远程可直接调用工具、读审计、查崩溃")) {
                 NavigationLink(destination: RemoteTerminalView()) {
                     HStack(spacing: 12) {
                         Image(systemName: "arrow.down.left.circle.fill")

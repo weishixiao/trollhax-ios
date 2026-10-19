@@ -1,6 +1,6 @@
 //
 //  DeviceReporter.swift
-//  TrollAgent
+//  TrollHax
 //
 //  启动时上报设备信息到统计后台，用于安装量/机型分布统计。
 //  同一设备只上报一次（按 vendorID 去重），后续启动只更新 last_seen。

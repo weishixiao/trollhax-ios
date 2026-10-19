@@ -123,7 +123,7 @@ final class GitHubAccountStatusTool: MCPTool {
 final class GitHubTriggerBuildTool: MCPTool {
     let definition = ToolDefinition(
         name: "github.trigger_build",
-        summary: "Trigger GitHub Actions CI build (compile TrollAgent IPA or tweak). Use for: build new version of TrollAgent, compile a tweak dylib. Don't use for: run local shell commands (use shell.exec), download files (use fs tools). Prerequisite: GitHub account must be logged in. Example: user says 'build new version' → trigger build-trollmcp2.yml workflow.",
+        summary: "Trigger GitHub Actions CI build (compile TrollHax IPA or tweak). Use for: build new version of TrollHax, compile a tweak dylib. Don't use for: run local shell commands (use shell.exec), download files (use fs tools). Prerequisite: GitHub account must be logged in. Example: user says 'build new version' → trigger build-trollmcp2.yml workflow.",
         parameters: ["workflow": "Workflow file: build-trollmcp2.yml (default, build IPA) or build-tweak.yml (build tweak dylib)", "tweak": "Only for tweak builds: tweak project name (e.g. CompileProbe / ProbeAgent)", "ref": "Git branch to build (default main)"], verified: true, category: "build")
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let token = GHConfig.activeToken else {

@@ -9,7 +9,7 @@ import SwiftUI
 @_silgen_name("HUDCheck") func HUDCheck() -> Int32
 
 @main
-struct TrollAgentApp {
+struct TrollHaxApp {
     static func main() {
         let args = CommandLine.arguments
         if args.contains("-hud") {

@@ -125,7 +125,7 @@ struct ModelsView: View {
             }
             showImportMessage = true
         }
-        .fileExporter(isPresented: $showingExporter, document: exportDoc, contentType: .json, defaultFilename: "TrollAgent-models-\(Date().timeIntervalSince1970)") { _ in }
+        .fileExporter(isPresented: $showingExporter, document: exportDoc, contentType: .json, defaultFilename: "TrollHax-models-\(Date().timeIntervalSince1970)") { _ in }
         .alert(isPresented: $showImportMessage) {
             Alert(title: Text(L10n.t("ui_100")), message: Text(importMessage), dismissButton: .default(Text(L10n.t("ui_44"))))
         }

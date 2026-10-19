@@ -42,7 +42,7 @@ final class AppReplaceDecryptedTool: MCPTool {
         // 2. 优先：直接解密主二进制到工作区 (跳过 ipa 解压——ZipStorer 对大 ipa 有写坏 bug）
         // v2.9.262：decryptMainBinaryToFile 复用启动+task_for_pid+decryptBinary，直出解密主二进制
         // v2.9.264：若 .bin 已存在且 >50MB (上次解密已OK产出），直接复用——
-        // 不重新启动目标 App (启动小红书会抢前台把 TrollAgent 顶到后台被杀，实测两次中断）
+        // 不重新启动目标 App (启动小红书会抢前台把 TrollHax 顶到后台被杀，实测两次中断）
         let mainOut = workspace + "/replace_main_" + bundleId.replacingOccurrences(of: ".", with: "_") + ".bin"
         var decryptedMain = ""
         if FileManager.default.fileExists(atPath: mainOut),

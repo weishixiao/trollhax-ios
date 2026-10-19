@@ -54,7 +54,7 @@ final class SkillStore {
         return json.map { SkillItem(dict: $0) }
     }
 
-    /// 内置技能全集（reverse-skill 风格骨架，TrollAgent ta 工具链）
+    /// 内置技能全集（reverse-skill 风格骨架，TrollHax ta 工具链）
     static let builtinSkills: [[String: String]] = [
             [
                 "name": "Translate & Polish",
@@ -71,7 +71,7 @@ final class SkillStore {
                 "summary": "Theos Tweak development full-flow guide: project structure, Makefile, packaging, GitHub Actions online build",
                 "instruction": "当用户涉及 Tweak 开发时执行本技能：\n1. 工程需包含 Makefile / Tweak.x / .plist；\n2. 提示 Theos 需 submodules: recursive 克隆，GitHub Actions 用 macos-14 runner + brew install ldid；\n3. 打包用 make clean package FINALPACKAGE=1；\n4. 产物为 .deb/.dylib，可用 TrollFools 注入测试。",
             ],
-            // ===== TrollAgent 逆向/取证技能（reverse-skill 风格，ta 工具链） =====
+            // ===== TrollHax 逆向/取证技能（reverse-skill 风格，ta 工具链） =====
             [
                 "name": "iOS 注入分析",
                 "summary": "inject a dylib into an iOS app, check injection status, remove injection. Use for: enable/disable/verify tweak injection into target app. Don't use for: package inspection (use package), memory hacking (use memory). Example: user wants to inject a tweak dylib into a game.",

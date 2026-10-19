@@ -222,7 +222,7 @@ struct RemoteControlView: View {
         }
     }
 
-    /// v2.9.109：切换真后台保活（目标 App + TrollAgent 自身）
+    /// v2.9.109：切换真后台保活（目标 App + TrollHax 自身）
     private func toggleKeepAlive(_ on: Bool) {
         postKeepAliveNotification(on)
         if on {

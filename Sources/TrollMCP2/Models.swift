@@ -291,7 +291,7 @@ final class ModelStore: ObservableObject {
             }
         }
         let payload: [String: Any] = [
-            "app": "TrollAgent", "type": "model_configs", "version": 1,
+            "app": "TrollHax", "type": "model_configs", "version": 1,
             "exportedAt": Int(Date().timeIntervalSince1970),
             "configs": items
         ]
@@ -1742,7 +1742,7 @@ final class ConversationStore: ObservableObject {
         var appVer = ""
         if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String { appVer = v }
         var parts = ["[当前环境] 设备: \(device)\(os.isEmpty ? "" : " · \(os)")"]
-        if !appVer.isEmpty { parts.append("App: TrollAgent \(appVer)") }
+        if !appVer.isEmpty { parts.append("App: TrollHax \(appVer)") }
         parts.append("工作区: \(Workspace.root.path)")
         if let idx = ConversationStore.shared.selectedIndex,
            idx < ConversationStore.shared.conversations.count {

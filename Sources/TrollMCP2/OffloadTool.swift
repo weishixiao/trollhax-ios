@@ -49,7 +49,7 @@ enum OffloadRouter {
             return listHelp(raw)
         }
         if first == "version" || first == "--version" {
-            return ["command": raw, "exit_code": 0, "stdout": "ta offload router 1.0 (TrollAgent)", "hint": "ta list / ta help <tool> / ta <tool> <key:value...>"]
+            return ["command": raw, "exit_code": 0, "stdout": "ta offload router 1.0 (TrollHax)", "hint": "ta list / ta help <tool> / ta <tool> <key:value...>"]
         }
         // 其它：当成工具名
         let toolName = first
@@ -110,7 +110,7 @@ enum OffloadRouter {
     private static func listTools(_ raw: String) -> [String: Any] {
         let names = ToolRegistry.shared.allToolNames().sorted()
         var lines: [String] = []
-        lines.append("TrollAgent native offload — \(names.count) tools")
+        lines.append("TrollHax native offload — \(names.count) tools")
         lines.append("usage: ta <tool> <key:value...>  |  ta help <tool>")
         lines.append("")
         for n in names {
@@ -160,7 +160,7 @@ enum OffloadRouter {
 
     private static func listHelp(_ raw: String) -> [String: Any] {
         return ["command": raw, "exit_code": 0,
-                "stdout": "ta — TrollAgent native offload\nusage:\n  ta list\n  ta help <tool>\n  ta <tool> <key:value> [key:value...]\n  ta <tool> {json}\nexample:\n  ta app launch bundle_id:com.appstudio.Jinx\n  ta vpn.capture command:start\n  ta shell.exec path:/var/mobile/Documents",
+                "stdout": "ta — TrollHax native offload\nusage:\n  ta list\n  ta help <tool>\n  ta <tool> <key:value> [key:value...]\n  ta <tool> {json}\nexample:\n  ta app launch bundle_id:com.appstudio.Jinx\n  ta vpn.capture command:start\n  ta shell.exec path:/var/mobile/Documents",
                 "hint": "start with 'ta list'"]
     }
 }

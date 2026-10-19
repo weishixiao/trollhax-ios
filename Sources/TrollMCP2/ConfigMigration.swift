@@ -1,6 +1,6 @@
 //
 //  ConfigMigration.swift
-//  TrollAgent — v2.9.126：配置 schema 迁移框架（借鉴 cc-switch DatabaseUpgrade）
+//  TrollHax — v2.9.126：配置 schema 迁移框架（借鉴 cc-switch DatabaseUpgrade）
 //
 //  问题：模块更新后旧配置结构脱节（key 改名/结构变化/新增必填字段），老用户升级后
 //  旧配置失效或行为异常，且无任何提示。

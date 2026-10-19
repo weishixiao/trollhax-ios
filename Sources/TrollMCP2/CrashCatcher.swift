@@ -257,7 +257,7 @@ enum CrashCatcher {
 
     /// v2.9.152：导出全部崩溃日志为一份文本（供分享/保存，用户反馈"不能分享保存"）
     static func exportAll() -> String {
-        var out = "TrollAgent 崩溃日志导出\n导出时间: \(Date())\n\n"
+        var out = "TrollHax 崩溃日志导出\n导出时间: \(Date())\n\n"
         for p in list() {
             out += "===== \(URL(fileURLWithPath: p).lastPathComponent) =====\n"
             out += content(p)

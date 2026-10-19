@@ -800,7 +800,7 @@ enum ZipStorer {
 
     static func createZip(at zipPath: String, fromDirectory dirPath: String) -> Bool {
         // v2.9.268：优先系统 /usr/bin/zip (单次 spawn done，快+可靠+不会中断在中央目录写入）。
-        // 背景：ZipStorer 流式打包 163MB ipa 在 iOS 上需 30-60s，期间 TrollAgent 被系统杀
+        // 背景：ZipStorer 流式打包 163MB ipa 在 iOS 上需 30-60s，期间 TrollHax 被系统杀
         // → central directory 未写入 → ipa 坏 (实测小红书 163MB "End-of-central-directory not found"）。
         // 系统 zip 用压缩线程+整包原子写，中断概率极低；failed再回退 ZipStorer。
         let dirName = (dirPath as NSString).lastPathComponent
@@ -813,7 +813,7 @@ enum ZipStorer {
             _ = FileManager.default.changeCurrentDirectoryPath(parentDir)
             let (zcode, zout) = InjectionManager.shared.spawn("/usr/bin/zip", args: ["-r", "-q", "-y", zipPath, dirName], timeout: 600)
             _ = FileManager.default.changeCurrentDirectoryPath(savedCwd)
-            // v2.9.270：系统 zip 结果写盘诊断 (TrollAgent 内 NSLog 不可达，写文件可远程读）
+            // v2.9.270：系统 zip 结果写盘诊断 (TrollHax 内 NSLog 不可达，写文件可远程读）
             let zipSize = (try? FileManager.default.attributesOfItem(atPath: zipPath)[.size] as? Int) ?? -1
             let diag = "zip_exists=1 zcode=\(zcode) zout=\(String(zout.prefix(300))) zipSize=\(zipSize)"
             try? diag.write(toFile: "/var/mobile/Documents/Workspace/zip_diag.log", atomically: true, encoding: .utf8)

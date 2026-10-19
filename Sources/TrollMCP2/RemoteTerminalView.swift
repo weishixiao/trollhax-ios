@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// v2.9.181：远程终端配置页
-/// TrollAgent 自身开公网 HTTP API（监听 0.0.0.0:8790），
+/// TrollHax 自身开公网 HTTP API（监听 0.0.0.0:8790），
 /// N1 公网端口转发到手机局域网 IP 后，云端 AI 可直接读取/调用/审计。
 struct RemoteTerminalView: View {
     @State private var token: String = RemoteTerminalServer.shared.token

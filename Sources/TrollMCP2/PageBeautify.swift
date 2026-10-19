@@ -13,10 +13,14 @@ struct PageHeader: View {
     var body: some View {
         HStack(spacing: 14) {
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 52, height: 52)
-                    .shadow(color: colors[0].opacity(0.3), radius: 6, x: 0, y: 3)
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.25), lineWidth: 0.8)
+                    )
+                    .shadow(color: colors[0].opacity(0.28), radius: 10, x: 0, y: 5)
                 Image(systemName: icon)
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundColor(iconColor)
@@ -50,12 +54,22 @@ struct CardBox<Content: View>: View {
     }
     var body: some View {
         content
-            .padding(14)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // v6.6.5：iOS 26/27 风格——液态玻璃材质 + 22pt 连续圆角 + 细描边
             .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
+                ZStack {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color(.secondarySystemBackground).opacity(0.35))
+                }
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.8)
+            )
+            .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
             .padding(.horizontal, 16)
     }
 }
