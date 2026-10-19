@@ -36,7 +36,7 @@ final class UpdateManager: ObservableObject {
         return "\(owner)/\(name)"
     }
     private var workflow: String {
-        UserDefaults.standard.string(forKey: "trollmcp2.github_workflow_id") ?? "build-trollmcp2.yml"
+        UserDefaults.standard.string(forKey: "trollmcp2.github_workflow_id") ?? "build-trollhax-ios.yml"
     }
 
     // MARK: - 镜像源配置（v4.3.30）

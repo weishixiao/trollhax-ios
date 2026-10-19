@@ -79,7 +79,7 @@ final class GitHubAccountStore: ObservableObject {
         let def = UserDefaults.standard
         repoOwner = def.string(forKey: ownerKey) ?? "zrrt"
         repoName = def.string(forKey: repoKey) ?? "trollmcp2"
-        workflowId = def.string(forKey: workflowKey) ?? "build-trollmcp2.yml"
+        workflowId = def.string(forKey: workflowKey) ?? "build-trollhax-ios.yml"
         branch = def.string(forKey: branchKey) ?? "main"
         // v2.9.117：空字符串也回退内置默认 (旧版删空保存会覆盖默认值，导致"未设置 Client ID"）
         let savedCID = def.string(forKey: clientIDKey) ?? ""
@@ -104,14 +104,17 @@ final class GitHubAccountStore: ObservableObject {
 
     private func load() {
         // v2.9.110：旧配置自动迁移——早期默认指向 origina47487lhe-droid (Actions 配额已耗尽）与
-        // build-tweak workflow (已更名 build-trollmcp2.yml）。覆盖安装会保留旧 UserDefaults，
+        // build-tweak workflow (已更名 build-trollhax-ios.yml）。覆盖安装会保留旧 UserDefaults，
         // 这里检测到旧值自动纠正，避免线上编译 404 / 触发到错误仓库。
+        // v6.6.7：GitHub 仓库改名 trollmcp2→trollhax-ios，workflow 文件同步改名；
+        // 老用户若之前手动配置过 build-trollmcp2.yml，升级后自动切到新名。
         let def = UserDefaults.standard
         if def.string(forKey: ownerKey) == "origina47487lhe-droid" {
             repoOwner = "zrrt"
         }
-        if def.string(forKey: workflowKey) == "build-tweak" {
-            workflowId = "build-trollmcp2.yml"
+        if let old = def.string(forKey: workflowKey),
+           old == "build-tweak" || old == "build-trollmcp2.yml" {
+            workflowId = "build-trollhax-ios.yml"
         }
         if let data = UserDefaults.standard.data(forKey: accountsKey),
            let saved = try? JSONDecoder().decode([GitHubAccount].self, from: data) {
