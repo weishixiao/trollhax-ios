@@ -707,13 +707,13 @@ final class ConversationStore: ObservableObject {
     /// v6.5.7：自我批判精炼——发一轮"批判并改进"，精炼版追加到原消息末尾。
     /// 触发条件：thinkEnabled + 原回答>120字 + 无工具轮 + 每消息一次。
     private func autoRefine(originalAnswer: String, appendTo sid: UUID) {
-        guard let cfg = modelStore.defaultConfig else {
+        guard let cfg = ModelStore.shared.defaultConfig else {
             refineInFlight = false
             return
         }
         let prompt = "对上一轮的回答做自我批判并改进：1) 指出逻辑错误、遗漏或可简化处；2) 若原回答已足够好，直接回复”原回答已完善”即可，不要强行改写；3) 若需改进，给出完整、准确、更有深度的最终回答。\n\n原回答：\n\(originalAnswer.prefix(6000))"
         let msgs = [ChatMessage(role: "user", content: prompt)]
-        let client = OpenAIClient(config: cfg)
+        let client = OpenAIClient(cfg)
         client.send(messages: msgs, tools: nil, onStatus: { _ in }, onDelta: { _ in }, onThinking: { _ in }) { [weak self] result in
             guard let self = self else { return }
             self.refineInFlight = false
@@ -1212,7 +1212,9 @@ final class ConversationStore: ObservableObject {
                         self.attachTrail(to: sid, thinking: thinking)
                         self.streamingMessageId = nil
                         // v6.5.7：自我批判精炼——深度思考开、答案足够长、本轮未精炼过 → 追加一轮"批判→改进"
-                        if self.thinkEnabled, !self.refineInFlight, !self.didRefineThisMessage,
+                        let thinkOn = UserDefaults.standard.object(forKey: "chat_think_enabled") == nil
+                            ? true : UserDefaults.standard.bool(forKey: "chat_think_enabled")
+                        if thinkOn, !self.refineInFlight, !self.didRefineThisMessage,
                            text.count > 120 {
                             self.didRefineThisMessage = true
                             self.refineInFlight = true
