@@ -1,4 +1,4 @@
-# TrollAgent（原 TrollMCP2）
+# TrollHax
 
 **AI 驱动的 iOS 巨魔（TrollStore）实验与 QA 工作台** —— Swift + SwiftUI + SwiftPM，跑在 iOS 15+ / TrollStore 环境，内置 **37 个大工具、100+ 子命令**，AI 通过自然语言调用全部能力。
 
@@ -80,5 +80,5 @@
 - **失败边界**：高优先级工具统一 `error_code/reason/next_step`，拒绝误导性报错
 
 ## 构建
-macOS runner / 本地 Mac：`bash scripts/build-ipa.sh`（产物 TrollAgent.ipa，TrollStore 直接安装）。
+macOS runner / 本地 Mac：`bash scripts/build-ipa.sh`（产物 TrollHax.ipa，TrollStore 直接安装）。
 CI 传 `RELEASE_VERSION` 自动注入产物版本（解决版本脱节）。

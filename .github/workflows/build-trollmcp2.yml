@@ -406,7 +406,7 @@ jobs:
     needs: [native-tools, native-python, native-wheels, native-nmap, native-llvm]
     runs-on: macos-latest
     env:
-      RELEASE_VERSION: 6.6.5
+      RELEASE_VERSION: 6.6.6
     steps:
       - uses: actions/checkout@v4
 
@@ -727,8 +727,10 @@ jobs:
           VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Support/Info.plist 2>/dev/null || echo "unknown")
           echo "version=$VER"
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest TrollAgent.tipa \
-            --title "TrollAgent latest (v${VER})" \
+          # v6.6.6：改名 TrollHax；同时保留 TrollAgent.tipa 旧名（兼容已装旧版的自更新探测）
+          cp -f TrollAgent.tipa TrollHax.tipa || true
+          gh release create latest TrollHax.tipa TrollAgent.tipa \
+            --title "TrollHax latest (v${VER})" \
             --notes "滚动构建（main 分支最新）。供 App 内多源自动更新使用：GitHub 被墙时经镜像前缀或 Releases 直链下载。下载地址：https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/TrollAgent.tipa" || \
             { echo "RELEASE PUBLISH FAILED (non-fatal)"; exit 0; }
 

@@ -382,7 +382,7 @@ final class UpdateManager: ObservableObject {
             let data = try Data(contentsOf: tempURL)
             let names = (try? ZipExtractor.entries(data).map { $0.name }) ?? []
             var finalURL: URL?
-            if names.contains("TrollAgent.tipa") {
+            if names.contains("TrollHax.tipa") || names.contains("TrollAgent.tipa") {
                 // GitHub artifact zip（内含 tipa）
                 let zipPath = tempURL.appendingPathExtension("zip")
                 if FileManager.default.fileExists(atPath: zipPath.path) { try FileManager.default.removeItem(at: zipPath) }
@@ -390,7 +390,7 @@ final class UpdateManager: ObservableObject {
                 let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ta-update-\(Int(Date().timeIntervalSince1970))")
                 try ZipExtractor.unzip(zipPath, to: dir)
                 try? FileManager.default.removeItem(at: zipPath)
-                finalURL = dir.appendingPathComponent("TrollAgent.tipa")
+                finalURL = dir.appendingPathComponent(FileManager.default.fileExists(atPath: dir.appendingPathComponent("TrollHax.tipa").path) ? "TrollHax.tipa" : "TrollAgent.tipa")
             } else if names.contains(where: { $0.hasPrefix("Payload/") }) || !isArtifact {
                 // tipa 本体（zip 含 Payload/）
                 let dest = FileManager.default.temporaryDirectory.appendingPathComponent("TrollAgent-v\(version).tipa")
