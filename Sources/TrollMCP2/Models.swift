@@ -1091,6 +1091,9 @@ final class ConversationStore: ObservableObject {
                     self.appendToCurrent(msg)
                 }
                 self.streamDeltaBuffer += delta
+                // v6.5.4：流式有活动 → 后台保活（有限后台任务 + 静音音频，切后台继续接收）
+                BackgroundKeepAlive.start()
+                BackgroundKeepAlive.poke()
                 self.scheduleStreamFlush()
             }
         }, onThinking: { delta in
@@ -1133,6 +1136,8 @@ final class ConversationStore: ObservableObject {
             } else {
                 DispatchQueue.main.sync { self.flushStreamBuffers() }
             }
+            // v6.5.4：流式结束 → 停后台保活（有限后台任务 + 静音音频）
+            BackgroundKeepAlive.stop()
             DispatchQueue.main.async {
                 self.statusText = nil
                 switch result {
