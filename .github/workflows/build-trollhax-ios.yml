@@ -6,6 +6,13 @@ name: build-trollhax-ios
 permissions:
   contents: write
 
+# v6.6.7：concurrency——同一时间只允许一个 build run 排队执行，
+# 新 run 自动取消旧 run。此前无此配置，多次触发导致多个 run 同时抢 macos runner，
+# native-wheels 排队 15min 超时被 GitHub 自动取消 → build 依赖失败被 skip（连挂 3 次）。
+concurrency:
+  group: build-trollhax-ios
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
     # v6.5.9：显式声明 inputs —— App「触发线上编译」会带 {"inputs":{"tweak":<目录名>}}，
