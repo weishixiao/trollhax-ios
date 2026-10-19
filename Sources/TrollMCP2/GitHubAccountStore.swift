@@ -451,10 +451,10 @@ final class GitHubAccountStore: ObservableObject {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = [
-            "ref": branch,
-            "inputs": ["tweak": tweak]
-        ]
+        // v6.5.9：inputs 仅在 tweak 非空时携带（避免仓库 workflow 未声明 input 时的 422）
+        var body: [String: Any] = ["ref": branch]
+        let tw = tweak.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tw.isEmpty { body["inputs"] = ["tweak": tw] }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: req) { [weak self] _, resp, err in
@@ -467,6 +467,28 @@ final class GitHubAccountStore: ObservableObject {
                     return
                 }
                 let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                if status == 422, !tw.isEmpty {
+                    // 仓库 workflow 未声明 input → 去掉 inputs 再试一次
+                    var req2 = URLRequest(url: URL(string: "\(apiBase)/repos/\(repoOwner)/\(repoName)/actions/workflows/\(workflowId)/dispatches")!, timeoutInterval: 60)
+                    setHTTPMethod("POST", on: &req2)
+                    req2.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    req2.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    req2.httpBody = try? JSONSerialization.data(withJSONObject: ["ref": branch])
+                    URLSession.shared.dataTask(with: req2) { [weak self] _, r2, _ in
+                        let st2 = (r2 as? HTTPURLResponse)?.statusCode ?? 0
+                        DispatchQueue.main.async {
+                            guard let self = self else { return }
+                            if st2 == 204 {
+                                self.lastError = nil
+                                completion(true, "已触发（该仓库未声明 tweak input，已按全量构建触发）")
+                            } else {
+                                self.lastError = "触发失败 HTTP \(st2)（已尝试去掉 inputs 重试；请检查 token 是否含 Actions write 权限）"
+                                completion(false, self.lastError)
+                            }
+                        }
+                    }.resume()
+                    return
+                }
                 if status == 204 {
                     NetworkLog.shared.log("触发线上编译 \(self.repoOwner)/\(self.repoName) tweak=\(tweak) (HTTP 204)")
                     self.fetchRuns { _ in }

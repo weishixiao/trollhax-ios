@@ -8,6 +8,14 @@ permissions:
 
 on:
   workflow_dispatch:
+    # v6.5.9：显式声明 inputs —— App「触发线上编译」会带 {"inputs":{"tweak":<目录名>}}，
+    # 若 workflow 未声明任何 input，GitHub 会直接返回 **422 Unexpected inputs provided**
+    # （用户实测"触发 failed (HTTP 422)"的根因）。
+    inputs:
+      tweak:
+        description: '要编译的 tweak 目录名（留空=全量构建）'
+        required: false
+        default: ''
   push:
     branches: [main]
 
