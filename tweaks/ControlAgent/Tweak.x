@@ -2,7 +2,7 @@
 // 合并自：ControlAgent（4789 截图/保活）+ TrollMCPAgent v4.1（4792 自动化）
 // 功能：截图 / UI树 / 点击 / 滑动 / 输入 / 按键 / 保活hook / 滚动
 // 端口：4789（统一）
-// 注入任意 App 后开启 localhost HTTP 服务，TrollAgent 通过 HTTP 控制目标 App
+// 注入任意 App 后开启 localhost HTTP 服务，TrollHax 通过 HTTP 控制目标 App
 // 设计原则：通用 UIKit API，不依赖具体 App 类名；加载零 UI 操作防闪退
 
 #import <Foundation/Foundation.h>
@@ -17,7 +17,7 @@
 #import <mach-o/fat.h>
 
 // ControlAgent v1.0 — 通用 UI 控制 dylib
-// 注入任意 App 后开启 localhost HTTP 服务，TrollAgent 通过 HTTP 控制目标 App
+// 注入任意 App 后开启 localhost HTTP 服务，TrollHax 通过 HTTP 控制目标 App
 // 端口固定 4789，API 见底部注释
 // 设计原则：通用 UIKit API，不依赖具体 App 的类名/结构
 
@@ -974,7 +974,7 @@ static void startHTTPServer(void) {
 // 机制：hook FBSWorkspaceScenesClient 的 scene 设置回调，当系统要把目标 App 的
 // scene 切后台（foreground=No 且非用户手势）时拦截转发，骗过 FrontBoard，
 // 让目标 App 保持"前台"状态、进程永不挂起 → 4789 远程控制持续在线。
-// 开关：TrollAgent 跨进程发 Darwin 通知 com.trollagent.keepalive 切换。
+// 开关：TrollHax 跨进程发 Darwin 通知 com.trollhax.keepalive 切换。
 
 static BOOL g_keepAlive = NO;
 
@@ -1027,7 +1027,7 @@ static void setupKeepAlive(void) {
     keepAliveChanged();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                     onDarwinKeepAlive,
-                                    CFSTR("com.trollagent.keepalive"),
+                                    CFSTR("com.trollhax.keepalive"),
                                     NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     caLog([NSString stringWithFormat:@"keepalive hook installed (initial=%@)", g_keepAlive ? @"ON" : @"OFF"]);
 }
@@ -1058,7 +1058,7 @@ static void controlAgentInitialize(void) {
 }
 
 /*
- API 文档（TrollAgent 通过 127.0.0.1:4789 调用）：
+ API 文档（TrollHax 通过 127.0.0.1:4789 调用）：
 
  GET  /status       → 控制代理状态、App 信息、PID
  GET  /ui_tree      → 完整 UI 树 JSON（所有窗口、视图、frame、text、可访问性）

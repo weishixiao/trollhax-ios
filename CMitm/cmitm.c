@@ -14,7 +14,7 @@
 #include <stdio.h>
 #include "cmitm.h"
 
-#define CA_CN "TrollAgent MITM CA"
+#define CA_CN "TrollHax MITM CA"
 #define CA_FILE "ca.pem"
 #define CA_KEY_FILE "ca_key.pem"
 

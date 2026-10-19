@@ -1,6 +1,6 @@
 # HUD —— 桌面悬浮窗框架（抄自 TrollSpeed，MIT）
 
-本目录是 **TrollSpeed**（https://github.com/Lessica/TrollSpeed ，MIT License, Copyright (c) 2023 Lessica）的 HUD（悬浮窗）框架源码与私有头文件，复制进 TrollAgent 工程用于实现「桌面悬浮小女孩」。
+本目录是 **TrollSpeed**（https://github.com/Lessica/TrollSpeed ，MIT License, Copyright (c) 2023 Lessica）的 HUD（悬浮窗）框架源码与私有头文件，复制进 TrollHax 工程用于实现「桌面悬浮小女孩」。
 
 ## 架构
 - `HUDApp.mm` —— HUD 独立进程的 `main`（`-hud` 参数分支，自己初始化 UIApplication）

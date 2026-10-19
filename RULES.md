@@ -1,6 +1,6 @@
-# RULES.md — TrollAgent 操作契约
+# RULES.md — TrollHax 操作契约
 
-> 所有在 TrollAgent 上执行的任务都受本契约约束。语义级别遵循 RFC 2119：MUST（必须）、MUST NOT（禁止）、SHOULD（原则上）、MAY（可选）。
+> 所有在 TrollHax 上执行的任务都受本契约约束。语义级别遵循 RFC 2119：MUST（必须）、MUST NOT（禁止）、SHOULD（原则上）、MAY（可选）。
 
 ## 路由契约（MUST）
 

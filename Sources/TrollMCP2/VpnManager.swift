@@ -116,7 +116,7 @@ final class VpnManager {
         let proto = NETunnelProviderProtocol()
         // v3.3.3：serverAddress 必须是合法地址（此前 "trollagent-mitm" 被系统判为 invalid protocol）
         proto.serverAddress = "127.0.0.1"
-        proto.providerBundleIdentifier = "com.trollagent.app.VpnTunnel"
+        proto.providerBundleIdentifier = "com.trollhax.app.VpnTunnel"
         proto.disconnectOnSleep = false
         // fix3cy5（P2-配置链路补全）：主 App 从未把抓包配置传给隧道引擎——这是"Fuck 引擎搬过来
         //   但抓不到包"的直接原因（引擎起来不知道抓什么/存哪）。这里一次性补两条：
@@ -174,9 +174,9 @@ final class VpnManager {
         proto.providerConfiguration = config
         if let data = try? PropertyListSerialization.data(fromPropertyList: config, format: .binary, options: 0) {
             let key = "com.ai.iosxcode.packet-tunnel.start-state" as CFString
-            // 域 1：appex 当前 bundle（重签后 = com.trollagent.app.VpnTunnel，CFPreferencesCopyAppValue 命中）
+            // 域 1：appex 当前 bundle（重签后 = com.trollhax.app.VpnTunnel，CFPreferencesCopyAppValue 命中）
             CFPreferencesSetValue(key, data as CFData,
-                                  "com.trollagent.app.VpnTunnel" as CFString,
+                                  "com.trollhax.app.VpnTunnel" as CFString,
                                   kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
             // 域 2：Fuck 原始 bundle（appex 若硬编码读 com.ai.iosxcode suite 命中）
             CFPreferencesSetValue(key, data as CFData,
@@ -186,7 +186,7 @@ final class VpnManager {
             CFPreferencesSetValue(key, data as CFData,
                                   "group.com.ai.iosxcode" as CFString,
                                   kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
-            CFPreferencesSynchronize("com.trollagent.app.VpnTunnel" as CFString,
+            CFPreferencesSynchronize("com.trollhax.app.VpnTunnel" as CFString,
                                      kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
             CFPreferencesSynchronize("com.ai.iosxcode" as CFString,
                                      kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
@@ -344,23 +344,23 @@ final class VpnManager {
         let certPayload: [String: Any] = [
             "PayloadType": "com.apple.security.root",
             "PayloadVersion": 1,
-            "PayloadIdentifier": "com.trollagent.app.mitmca",
+            "PayloadIdentifier": "com.trollhax.app.mitmca",
             "PayloadUUID": UUID().uuidString,
             "PayloadDisplayName": "TrollHax MITM CA",
             "PayloadContent": der,
-            "PayloadCertificateFileName": "TrollAgentCA.der"
+            "PayloadCertificateFileName": "TrollHaxCA.der"
         ]
         let profile: [String: Any] = [
             "PayloadType": "Configuration",
             "PayloadVersion": 1,
-            "PayloadIdentifier": "com.trollagent.app.mitm",
+            "PayloadIdentifier": "com.trollhax.app.mitm",
             "PayloadUUID": UUID().uuidString,
             "PayloadDisplayName": "TrollHax 抓包证书",
             "PayloadDescription": "安装并信任后，TrollHax 可解密 HTTPS 明文用于抓包分析",
             "PayloadContent": [certPayload]
         ]
         guard let data = try? PropertyListSerialization.data(fromPropertyList: profile, format: .xml, options: 0) else { return nil }
-        let path = MitmProxy.shared.certDir + "/TrollAgentCA.mobileconfig"
+        let path = MitmProxy.shared.certDir + "/TrollHaxCA.mobileconfig"
         do {
             try data.write(to: URL(fileURLWithPath: path))
             return path

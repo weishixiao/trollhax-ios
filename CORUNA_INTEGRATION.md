@@ -2,7 +2,7 @@
 
 ## 概述
 
-将 Coruna 漏洞利用链集成到 TrollAgent v3.0.5，实现网页端一键注入 dylib 到任意 App。
+将 Coruna 漏洞利用链集成到 TrollHax v3.0.5，实现网页端一键注入 dylib 到任意 App。
 
 ## 漏洞利用链架构
 
@@ -97,7 +97,7 @@ Stage 9: AMFI 补丁
 
 ## 使用流程
 
-1. 打开 TrollAgent → 设置 → Coruna Web 注入
+1. 打开 TrollHax → 设置 → Coruna Web 注入
 2. 选择目标 App（要注入的应用）
 3. 选择要注入的 dylib 文件（Documents/dylibs/ 目录）
 4. 选择利用路径（默认自动检测）

@@ -1,6 +1,6 @@
 //
 //  HUDRootViewController.h
-//  TrollAgent
+//  TrollHax
 //
 //  悬浮窗内容视图（替换 TrollSpeed 自带按钮球）——放粉色萝莉塔小女孩
 //  本文件为最小替代实现，满足 HUDMainWindow/HUDMainApplicationDelegate 对

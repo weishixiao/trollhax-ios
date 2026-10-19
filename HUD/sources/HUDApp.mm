@@ -1,6 +1,6 @@
 //
 //  HUDApp.mm
-//  TrollAgent
+//  TrollHax
 //
 //  TrollSpeed 改造：单可执行双模式的核心悬浮逻辑（照抄 TrollSpeed 正解）。
 //  主 App 可执行（TrollStore 有效签名）的 main() 按 argv 分支调用：
@@ -158,7 +158,7 @@ extern "C" void HUDMainStart(void)
                          error:nil];
 
         // v6.0.8 根治叠加：HUD 进程是独立 root 进程，卸载 app 不杀它、旧 HUD 也不监听 exit 通知，
-        // 所以"开关一次加一个角色"。这里 HUD（root 身份，有权杀同类）启动时枚举并杀掉所有旧 TrollAgentHUD，
+        // 所以"开关一次加一个角色"。这里 HUD（root 身份，有权杀同类）启动时枚举并杀掉所有旧 TrollHaxHUD，
         // 只留自己——无论旧 HUD 是否新版，都清干净。用 dlopen libproc + dlsym 避免链接依赖。
         {
             void *proc_h = dlopen("/usr/lib/libproc.dylib", RTLD_LAZY);
@@ -175,7 +175,7 @@ extern "C" void HUDMainStart(void)
                         for (int i = 0; i < n && i < cap; i++) {
                             if (pids[i] <= 0 || pids[i] == pid) continue;
                             char nm[128] = {0};
-                            if (pname(pids[i], nm, sizeof(nm)) > 0 && strstr(nm, "TrollAgentHUD") != NULL) {
+                            if (pname(pids[i], nm, sizeof(nm)) > 0 && strstr(nm, "TrollHaxHUD") != NULL) {
                                 kill(pids[i], SIGKILL);
                             }
                         }
@@ -224,7 +224,7 @@ extern "C" void HUDMainStart(void)
         // v6.0.8：监听退出通知——主 App 以 mobile 身份 kill 不掉 root 的 HUD 进程(EPERM)，
         // 导致"开关一次加一个角色"叠加。改为 HUD 自己监听 notify 后 _exit(0)（进程有权杀自己）。
         static int exitToken;
-        notify_register_dispatch("com.trollagent.hud.exit", &exitToken, dispatch_get_main_queue(), ^(int t) {
+        notify_register_dispatch("com.trollhax.hud.exit", &exitToken, dispatch_get_main_queue(), ^(int t) {
             _exit(0);
         });
 

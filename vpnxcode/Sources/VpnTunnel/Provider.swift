@@ -120,7 +120,7 @@ private func appexLog(_ msg: String) {
                 NSLog("[VpnTunnel] tunnel core exited code \(code)")
                 appexLog("tunnel core exited code \(code) stopping=\(self.stopping)")
                 if !self.stopping {
-                    self.cancelTunnelWithError(NSError(domain: "TrollAgent.VpnTunnel", code: Int(code),
+                    self.cancelTunnelWithError(NSError(domain: "TrollHax.VpnTunnel", code: Int(code),
                                                        userInfo: [NSLocalizedDescriptionKey: "tunnel core exited"]))
                 }
             }

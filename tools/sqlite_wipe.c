@@ -1,5 +1,5 @@
 /*
- * sqlite_wipe — TrollAgent 内置工具（v2.9.96）
+ * sqlite_wipe — TrollHax 内置工具（v2.9.96）
  * 以 root 直改 /var/Keychains/keychain-2.db，删除指定 access group 的钥匙串条目。
  * 用法: sqlite_wipe <group> [group2 ...]
  * 编译(iOS arm64): xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=14.0 sqlite_wipe.c -lsqlite3 -o sqlite_wipe

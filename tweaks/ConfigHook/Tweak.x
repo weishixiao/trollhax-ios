@@ -155,7 +155,7 @@ static void ch_applyConfig(NSDictionary *config) {
         // 3. 启动弹窗
         NSDictionary *alert = config[@"alert"];
         if (alert && [alert isKindOfClass:[NSDictionary class]]) {
-            NSString *title = alert[@"title"] ?: @"TrollAgent";
+            NSString *title = alert[@"title"] ?: @"TrollHax";
             NSString *message = alert[@"message"] ?: @"";
             UIWindow *key = [UIApplication sharedApplication].keyWindow;
             if (key) {

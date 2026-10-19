@@ -1,4 +1,4 @@
-# 生成 TrollAgent 图标主题变体（blue / original / white / outset）
+# 生成 TrollHax 图标主题变体（blue / original / white / outset）
 # 基于现有巨魔蓝 AppIcon 做 HSL 变换，产出 60@2x / 60@3x / 1024 三档
 import io, os
 from PIL import Image, ImageEnhance, ImageOps

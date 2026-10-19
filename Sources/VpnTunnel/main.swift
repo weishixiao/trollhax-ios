@@ -120,7 +120,7 @@ if rc != 0 { exit(rc) }
                 }
                 NSLog("[VpnTunnel] tunnel core exited code \(code)")
                 if !self.stopping {
-                    self.cancelTunnelWithError(NSError(domain: "TrollAgent.VpnTunnel", code: Int(code),
+                    self.cancelTunnelWithError(NSError(domain: "TrollHax.VpnTunnel", code: Int(code),
                                                        userInfo: [NSLocalizedDescriptionKey: "tunnel core exited"]))
                 }
             }
