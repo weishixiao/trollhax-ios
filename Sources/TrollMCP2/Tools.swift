@@ -375,12 +375,12 @@ final class ContainerExecTool: MCPTool {
 final class DiagnoseExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "diagnose",
-        summary: "Diagnose app/injection issues (startup/injection). Use subcommand to specify action. Use for: diagnose why app won't launch, why injection failed. Don't use for: fix issues (use inject.*), restart app (use app restart). Example: startup → diagnose startup bundle_id:com.xxx; injection → diagnose injection bundle_id:com.xxx. Subcommands: startup / injection.",
+        summary: "Diagnose app/injection/environment issues. Subcommands: startup (app won't launch) / injection (inject failure) / rootchain (full root privilege chain - spawnRoot/persona/setuid/entitlements, for iOS 17+ ENOSYS/85 failures). Use for: diagnose why app won't launch, why injection failed, why root operations fail. Don't use for: fix issues (use inject.*), restart app (use app restart). Example: startup → diagnose startup bundle_id:com.xxx; injection → diagnose injection bundle_id:com.xxx; rootchain → diagnose rootchain (no params).",
         parameters: [
-            "command": "Subcommand: startup / injection",
-            "bundle_id": "App bundle ID"
+            "command": "Subcommand: startup / injection / rootchain",
+            "bundle_id": "App bundle ID (required for startup/injection; ignore for rootchain)"
         ],
-        verified: true, category: "diagnose", prerequisites: ["App 已安装且 bundle_id 有效 (先 app status 确认)", "startup 诊断依赖 App 曾启动过 (有崩溃日志才有意义)"])
+        verified: true, category: "diagnose", prerequisites: ["App 已安装且 bundle_id 有效 (先 app status 确认，rootchain 不需要)", "startup 诊断依赖 App 曾启动过 (有崩溃日志才有意义)"])
     
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {
@@ -401,9 +401,23 @@ final class DiagnoseExecTool: MCPTool {
                 throw MCPError.invalidParams("bundle_id required")
             }
             return try InjectionDiagnoseTool().invoke(["bundle_id": bundleId])
+        
+        case "rootchain":
+            // v6.6.7: 完整 root 提权链路诊断 (spawnRoot 85 ENOSYS / persona-mgmt / TSRootBinaries setuid / iOS 17 AMFI)
+            let chain = InjectionManager.shared.diagnoseRootChain()
+            let severity = chain["severity"] as? String ?? "ok"
+            let diagLines = chain["diagnosis"] as? [String] ?? []
+            let message = "root chain " + severity + (diagLines.isEmpty ? "" : ": " + diagLines.joined(separator: " | "))
+            return [
+                "message": message,
+                "severity": severity,
+                "diagnosis": diagLines,
+                "advice": chain["advice"] ?? "",
+                "chain": chain
+            ]
             
         default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: startup/injection")
+            throw MCPError.invalidParams("Unknown command: \(command). Available: startup/injection/rootchain")
         }
     }
 }
