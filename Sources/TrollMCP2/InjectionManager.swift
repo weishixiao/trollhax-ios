@@ -256,10 +256,17 @@ final class InjectionManager {
                     }
                 }
             }
+            // v6.6.15：**关键修复**——越狱分支此前直接 return，跳过了文件末尾的 native 直写兜底。
+            // 结果：目标 App 属主是 mobile(501) 时，本可无需 root 直接写，却被 early return 挡住，
+            // 表现为「root 写入 failed(85)」而注入失败（用户实测 ControlAgent 注入失败的真因）。
+            if let native = nativeFileOp(name, args) {
+                return (native.0, native.1.isEmpty ? "[native fallback OK，无需 root]" : native.1)
+            }
             let hint: String
             switch jb.code {
             case 13:  hint = "（helper 无 root 权限：越狱终端执行 chown root:wheel + chmod u+s 修复）"
             case 2:   hint = "（helper 不存在）"
+            case 85:  hint = "（persona 被拒 ENOSYS，且该操作不能走 native 直写）"
             default:  hint = "（越狱 spawn 失败 errno=\(jb.code)）"
             }
             return (jb.code, "[越狱环境] " + hint + " " + jb.diagPrefix + jb.output)
@@ -2040,6 +2047,14 @@ final class InjectionManager {
                 spawnTest["id_code"] = Int(rid.code)
                 spawnTest["id_output"] = rid.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            // ④ v6.6.15：**裸 posix_spawn**（完全不带任何 attr）——判定瓶颈到底在哪：
+            //    code=0        → exec 本身 OK，之前的 85 来自 persona attr
+            //    code=85       → 连裸 spawn 都 ENOSYS，说明内核/沙盒层面禁 exec
+            //    code=1/13     → EPERM/EACCES，权限或沙盒
+            //    code=8        → ENOEXEC，二进制格式/签名问题
+            let raw = spawn(probeBin, args: ["--version"], timeout: 8)
+            spawnTest["raw_spawn_code"] = Int(raw.0)
+            spawnTest["raw_spawn_output"] = String(raw.1.prefix(200))
         } else {
             spawnTest["error"] = "no probe binary in bundle"
         }
