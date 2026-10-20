@@ -1089,6 +1089,8 @@ public final class ToolRegistry: ObservableObject {
         register(DeviceExecTool())
         // v6.6.11：Hax 电脑——AI 可调用的 Alpine 工作站（exec/code/search/fetch/read/write/install）
         register(HaxComputerTool())
+        // v6.6.12：引擎控制——AI 可自主开关 Alpine/iSH（依赖 Alpine 的工具不再被门控卡死）
+        register(EngineTool())
         // v3.1.40: 删旧的 4 个 device.* 工具 (已合并到 device 大工具）
         register(MemoryTweakTool())   // v2.9.60：H5GG式内存修改 (需先注入MemoryTweak.dylib）
         // v3.1.34: control 大工具 + 子命令 (合并 10 个 control.* 工具）
