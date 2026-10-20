@@ -1923,8 +1923,8 @@ final class InjectionManager {
         result["jailbreak_root_launcher"] = JBEnvironment.rootLaunchPath() ?? "(none)"
         if JBEnvironment.isJailbroken {
             result["jailbreak_toolchain"] = JBEnvironment.toolchainSnapshot()
-            let binDir = mainBundlePath + "/bin"
-            result["helper_owner"] = JBEnvironment.helperOwnerReport(binDir)
+            // 注意：此处 mainBundlePath 尚未声明（在主二进制路径段才赋值），直接用 Bundle.main
+            result["helper_owner"] = JBEnvironment.helperOwnerReport(Bundle.main.bundlePath + "/bin")
         }
 
         // 2. 主二进制路径 & 文件权限
