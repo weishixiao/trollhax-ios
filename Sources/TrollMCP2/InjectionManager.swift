@@ -2045,14 +2045,13 @@ final class InjectionManager {
         }
         result["spawn_persona_test"] = spawnTest
 
-        // 5b. 测试 setuid fallback（不带 persona attr）
+        // 5b. setuid fallback 结果——直接复用上面 5 段已经跑过的 no_persona 测试，
+        // 不再单独 spawn 一次（原实现用 /bin/sh，iOS 主机不存在，恒失败）。
         var fallbackTest: [String: Any] = [:]
-        if FileManager.default.fileExists(atPath: shPath) {
-            let r = spawnRootDetailed(shPath, args: ["-c", "id"], timeout: 10, usePersona: false)
-            fallbackTest["code"] = Int(r.code)
-            fallbackTest["diag_prefix"] = r.diagPrefix
-            fallbackTest["stdout"] = r.stdout
-            fallbackTest["stderr"] = r.stderr
+        if let c = spawnTest["no_persona_code"] as? Int {
+            fallbackTest["code"] = c
+            fallbackTest["stdout"] = spawnTest["no_persona_stdout"] ?? ""
+            fallbackTest["note"] = "复用 spawn_persona_test.no_persona_code"
         }
         result["spawn_no_persona_test"] = fallbackTest
 
