@@ -169,6 +169,21 @@ final class VansonMemoryBridge {
         ]
     }
 
+    /// 引擎自检：确认静态库真的链进来了、单例可实例化、关键属性可读。
+    /// 用于真机上快速判断「是我的用法有问题」还是「引擎没编进来」。
+    /// 注意：只做只读检查，不 attach 任何进程（避免破坏用户当前会话）。
+    var selfCheck: [String: Any] {
+        let eng = engine
+        return [
+            "engine_class": NSStringFromClass(type(of: eng)),
+            "singleton_ok": (eng === VMMemoryEngine.shared()),
+            "result_limit": UInt64(eng.resultLimit),
+            "float_tolerance": eng.floatTolerance,
+            "attached_pid": Int(attachedPid),
+            "attached": attachedPid != 0,
+        ]
+    }
+
     // MARK: - 异步转同步
 
     /// 把「completion(count, msg)」风格的引擎 API 转成同步返回值。

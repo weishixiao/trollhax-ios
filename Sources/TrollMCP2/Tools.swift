@@ -68,7 +68,7 @@ final class MemoryTweakTool: MCPTool {
         name: "memory",
         summary: "Game memory modification (GameGuardian/H5GG style). Two backends: (A) native — built-in VansonMod engine, works out of the box, attach by pid or bundle_id, supports exact/fuzzy scan, refine, filter, read/write, freeze; (B) legacy — HTTP proxy to MemoryTweak.dylib injected into target app. Params: action, target, bundle_id, pid, value, value2, type, address, offset, limit, mode. Native is default; set backend:legacy to force dylib mode.",
         parameters: [
-            "action": "attach (bind target process) / search (first exact scan) / fuzzy (first fuzzy scan) / refine (filter current results by new value) / filter (filter by condition) / results (page through results) / read (read memory at address) / write (set value) / read_raw (hex dump) / write_raw (hex write) / freeze (lock value) / unfreeze / frozen / status / clear / undo",
+            "action": "selfcheck (verify engine linked, no attach needed) / attach (bind target process) / search (first exact scan) / fuzzy (first fuzzy scan) / refine (filter current results by new value) / filter (filter by condition) / results (page through results) / read (read memory at address) / write (set value) / read_raw (hex dump) / write_raw (hex write) / freeze (lock value) / unfreeze / frozen / status / clear / undo",
             "backend": "native (default, built-in VansonMod engine) / legacy (HTTP → MemoryTweak.dylib on 127.0.0.1:8765)",
             "target": "Process name or bundle id to attach (e.g. com.example.game). Same as bundle_id when it contains a dot.",
             "bundle_id": "Bundle id of target app (attach)",
@@ -158,6 +158,14 @@ final class MemoryTweakTool: MCPTool {
             var out = bridge.status
             out["ok"] = true
             out["backend"] = "native"
+            return out
+
+        case "selfcheck":
+            // 确认 VansonMod 引擎已链入并可用；不需要 attach 任何进程
+            var out = bridge.selfCheck
+            out["ok"] = true
+            out["backend"] = "native"
+            out["note"] = "engine_class 应为 VMMemoryEngine；singleton_ok 应为 true。若此动作报 unknown action 或崩溃，说明静态库没链进来。"
             return out
 
         case "search":
