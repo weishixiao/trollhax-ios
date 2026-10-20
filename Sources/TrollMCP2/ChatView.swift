@@ -25,7 +25,6 @@ struct ChatView: View {
     // v6.6.11：右上角 + 号菜单入口
     @State private var showTerminal = false
     @State private var showHaxComputer = false
-    @State private var showRootfsManagement = false
     // v3.3.4：输入框 + 号展开"应用/相册/文件/浏览器"快捷行（点 + 变 x 收起）
     @State private var attachExpanded = false
 
@@ -124,11 +123,6 @@ struct ChatView: View {
                             } label: {
                                 Label("Hax 电脑", systemImage: "desktopcomputer")
                             }
-                            Button {
-                                showRootfsManagement = true
-                            } label: {
-                                Label("Rootfs 管理", systemImage: "internaldrive")
-                            }
                         } label: {
                             Image(systemName: "plus.circle")
                                 .font(.system(size: 18, weight: .semibold))
@@ -204,9 +198,6 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showHaxComputer) {
             CompatNav { HaxComputerView() }
-        }
-        .sheet(isPresented: $showRootfsManagement) {
-            CompatNav { RootfsManagementView() }
         }
         // v2.9.31：授权弹窗已整体移除（工具搜索即自动授权，无弹窗）。
         .sheet(item: $attachmentSheet, onDismiss: {

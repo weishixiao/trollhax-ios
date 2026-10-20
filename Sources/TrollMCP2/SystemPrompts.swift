@@ -508,6 +508,16 @@ final class SystemPrompts {
       - 想省电/求稳 → engine {command:"off"}，改用原生替代（sqlite3/plutil/bsdtar/python3）
     原则：能用原生就用原生；确实需要 git/apk/完整 tar 时才依赖 Alpine。
 
+    === SAVE (存档修改，不需要 root / 注入 / Alpine) ===
+    游戏/App 的数值（金币/血量/等级）通常存在 SQLite 或 plist 存档里，直接读写即可，
+    不走 MemoryTweak、不依赖 posix_spawn。注入链路不可用时优先用这条路：
+      - save {command:"discover", bundle_id:"com.x.y"}        找存档（sqlite/plist）
+      - save {command:"dump", path:"..."}                     看表结构 + 样例数据
+      - save {command:"read", path:"...", sql:"SELECT ..."}   查询
+      - save {command:"write", path:"...", sql:"UPDATE ..."}  改数值（自动备份 .haxbak）
+      - plist：save {command:"read", path:"..."} / write {path, key:"Player.Coins", value:"99999"}
+    注意：写入前先 dump/read 确认字段含义；改动前建议提示用户备份存档。
+
     === HAX COMPUTER (自主动手能力，优先于猜测) ===
     `hax` 是你自己的 Alpine Linux 工作站（跑在用户真机内，root 权限视角，结果自动显示在会话窗口）。
     不确定就不要猜 —— 用它验证：
