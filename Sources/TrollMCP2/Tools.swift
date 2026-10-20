@@ -45,6 +45,8 @@ final class DeviceProbeTool: MCPTool {
                 "vendorID": r.vendorID,
             ],
             "trollStore": r.trollStore,
+            "jailbreakEnv": r.jailbreakEnv,
+            "jailbreakRoot": r.jailbreakRoot,
             "trollFools": r.trollFools,
             "task_for_pid": r.taskForPid,
             "appContainerWrite": r.containerWrite,

@@ -238,6 +238,33 @@ final class InjectionManager {
         if geteuid() == 0, let native = nativeFileOp(name, args) {
             return native
         }
+        // v6.6.10：越狱环境专用提权路径。
+        // rootHide/Relaxin 会拦截 persona spawn → 恒返回 85 (ENOSYS)，那条路注定失败。
+        // 越狱的 amfid 已绕过签名校验，只要 helper 有 setuid + root 属主，
+        // **普通 posix_spawn（不带 persona）** 就能拿到 euid=0。
+        if JBEnvironment.isJailbroken {
+            let jb = spawnRootDetailed(bin, args: args, timeout: timeout, usePersona: false)
+            if jb.code == 0 {
+                return (0, jb.output)
+            }
+            // helper 自身没权限时，借越狱自带的 root 工具代跑（sudo -n / jbctl）
+            if jb.code == 13 || jb.code == 1 || jb.code == 126 {
+                if let launcher = JBEnvironment.rootLaunchPath() {
+                    let viaLauncher = spawn(launcher, args: ["-n", bin] + args, timeout: timeout)
+                    if viaLauncher.0 == 0 {
+                        return (0, "[jb-launcher \(launcher)] " + viaLauncher.1)
+                    }
+                }
+            }
+            let hint: String
+            switch jb.code {
+            case 13:  hint = "（helper 无 root 权限：越狱终端执行 chown root:wheel + chmod u+s 修复）"
+            case 2:   hint = "（helper 不存在）"
+            default:  hint = "（越狱 spawn 失败 errno=\(jb.code)）"
+            }
+            return (jb.code, "[越狱环境] " + hint + " " + jb.diagPrefix + jb.output)
+        }
+
         // v2.9.284：去掉 [name] 前缀——argv[0]=bin 已是可执行路径 (v2.9.281 修复），
         // argv[1:] 应为纯参数。之前多塞 name 导致 argv[1]="cp"/"chown"/"install_name_tool" 等
         // 被工具当作第一个参数/第一个源文件：cp 报 "target ... No such file" (把 "cp" 当源）、
@@ -1883,6 +1910,11 @@ final class InjectionManager {
         result["process_name"] = ProcessInfo.processInfo.processName
         result["main_bundle_id"] = Bundle.main.bundleIdentifier ?? "?"
 
+        // 1b. v6.6.10：越狱环境（决定提权路径——rootHide 下 persona spawn 必然失败）
+        result["jailbreak_env"] = JBEnvironment.kind.rawValue
+        result["jailbreak_root"] = JBEnvironment.rootPrefix.isEmpty ? "(none)" : JBEnvironment.rootPrefix
+        result["jailbreak_root_launcher"] = JBEnvironment.rootLaunchPath() ?? "(none)"
+
         // 2. 主二进制路径 & 文件权限
         let mainBundlePath = Bundle.main.bundlePath
         let mainBundleBin = Bundle.main.executablePath ?? (mainBundlePath + "/TrollHax")
@@ -2009,61 +2041,107 @@ final class InjectionManager {
         }
         result["trollstore_paths"] = trollPaths
 
-        // 7. 自动归因
+        // 7. 自动归因（v6.6.10：按环境分流——越狱与 TrollStore 的提权模型完全不同）
         var diagnosis: [String] = []
         var severity: String = "ok"
 
         let hasPersonaMgmt = entitlements["has_persona_mgmt"] as? Bool ?? false
         let hasNoSandbox = entitlements["has_no_sandbox"] as? Bool ?? false
+        let isJB = JBEnvironment.isJailbroken
 
-        if !hasPersonaMgmt {
-            severity = "critical"
-            diagnosis.append("[A CRITICAL] TrollHax 主二进制缺 com.apple.private.persona-mgmt entitlement")
-            diagnosis.append("    → 原因1: build-ipa.sh 的 ldid -S Support/TrollHax.entitlements 步骤未生效")
-            diagnosis.append("    → 原因2: TrollStore 安装时未保留特权 entitlements (可能 TrollStore 版本过旧)")
-            diagnosis.append("    → 修复: 检查 scripts/build-ipa.sh 的签名段；确认 TrollStore ≥ 1.1.1；卸载重装 TrollHax")
-        }
-        if hasPersonaMgmt && !hasNoSandbox {
-            if severity != "critical" { severity = "high" }
-            diagnosis.append("[A2 HIGH] TrollHax 主二进制有 persona-mgmt 但缺 no-sandbox (影响 App Bundle 写)")
-        }
-
-        if setuidCount == 0 {
-            if severity != "critical" { severity = "high" }
-            diagnosis.append("[B HIGH] 所有 TSRootBinaries helper 都没有 setuid 位")
-            diagnosis.append("    → TrollStore 未应用 Info.plist TSRootBinaries 声明的 setuid")
-            diagnosis.append("    → setuid fallback 路径不可用；必须走 persona spawn 链路")
-            diagnosis.append("    → 修复: 升级 TrollStore 到 ≥ 1.1.1；卸载重装 TrollHax")
-        } else if setuidCount < totalCount {
-            diagnosis.append("[B WARN] 部分 helper 有 setuid 位 (\(setuidCount)/\(totalCount))——setuid fallback 部分可用")
-        } else if totalCount > 0 {
-            diagnosis.append("[B OK] 所有 helper 都有 setuid 位 (\(setuidCount)/\(totalCount))——setuid fallback 路径可用")
-        }
-
-        if let code = spawnTest["code"] as? Int {
-            if code == 85 {
-                if severity == "ok" { severity = "critical" }
-                diagnosis.append("[C CRITICAL] posix_spawn 返回 85 (ENOSYS)——persona spawn 被内核拒")
-                if hasPersonaMgmt {
-                    diagnosis.append("    → persona-mgmt entitlement 存在但被 iOS \(v.majorVersion).\(v.minorVersion) AMFI 拒绝")
-                    diagnosis.append("    → iOS 17+ 高发：TrollHax 需双架构原生运行 (arm64+arm64e)")
-                    diagnosis.append("    → 检查 TrollHax 主二进制 lipo -info 是否含 arm64e slice")
-                } else {
-                    diagnosis.append("    → persona-mgmt entitlement 不存在 (见 [A])")
-                }
-            } else if code == 0 {
-                if let out = spawnTest["stdout"] as? String, out.contains("uid=0") {
-                    diagnosis.append("[C OK] persona spawn 工作正常，uid=0")
-                } else if let out = spawnTest["stdout"] as? String, !out.isEmpty {
-                    if severity != "critical" { severity = "high" }
-                    diagnosis.append("[C HIGH] spawnRoot 成功但 uid!=0——persona 属性未真正生效")
-                } else {
-                    diagnosis.append("[C WARN] spawnRoot code=0 但空输出，无法确认提权状态")
-                }
-            } else if code == -2 {
-                diagnosis.append("[C WARN] spawnRoot 超时")
+        if isJB {
+            // ===== 越狱环境：persona spawn 不适用，唯一提权手段是 helper 的 setuid + root 属主 =====
+            diagnosis.append("[JB] 越狱环境：\(JBEnvironment.kind.rawValue)（根路径 \(JBEnvironment.rootPrefix)）")
+            diagnosis.append("    → 越狱下不使用 persona spawn；rootHide/Relaxin 会拦截它并返回 85，属预期")
+            if let launcher = JBEnvironment.rootLaunchPath() {
+                diagnosis.append("    → 可用越狱提权入口：\(launcher)")
             } else {
-                diagnosis.append("[C INFO] spawnRoot code=\(code)")
+                diagnosis.append("    → 未找到越狱提权入口（sudo/jbctl），越狱工具链可能不完整")
+            }
+
+            if setuidCount == 0 {
+                severity = "critical"
+                diagnosis.append("[B CRITICAL] 全部 \(totalCount) 个 helper 缺 setuid 位——越狱下这是唯一的提权手段")
+                diagnosis.append("    → 在越狱终端（NewTerm / Filza 以 root）执行以下命令，然后回 App 重试：")
+                for line in JBEnvironment.privilegeFixCommand(appPath: mainBundlePath).split(separator: "\n") {
+                    diagnosis.append("      " + String(line))
+                }
+            } else if setuidCount < totalCount {
+                if severity != "critical" { severity = "high" }
+                diagnosis.append("[B HIGH] 部分 helper 有 setuid（\(setuidCount)/\(totalCount)）——部分操作可用，建议全部补齐")
+                diagnosis.append("    → 在越狱终端以 root 执行：")
+                for line in JBEnvironment.privilegeFixCommand(appPath: mainBundlePath).split(separator: "\n") {
+                    diagnosis.append("      " + String(line))
+                }
+            } else {
+                diagnosis.append("[B OK] 全部 helper 有 setuid（\(setuidCount)/\(totalCount)）——越狱提权路径可用")
+            }
+
+            if !hasNoSandbox {
+                if severity == "ok" { severity = "high" }
+                diagnosis.append("[A2 HIGH] 主二进制缺 no-sandbox —— 越狱下写其他 App Bundle 需要它")
+            }
+
+            if let code = spawnTest["code"] as? Int, code == 85 {
+                diagnosis.append("[C INFO] persona spawn 返回 85 是**预期行为**（越狱/rootHide 不加载 persona 链路），不代表故障")
+            }
+            if let fb = fallbackTest["code"] as? Int {
+                if fb == 0 {
+                    diagnosis.append("[FALLBACK OK] 不带 persona 的 spawn 成功——越狱路径已生效")
+                    if severity == "critical" { severity = "high" }
+                }
+            }
+        } else {
+            // ===== 非越狱（TrollStore）：原有归因 =====
+            if !hasPersonaMgmt {
+                severity = "critical"
+                diagnosis.append("[A CRITICAL] TrollHax 主二进制缺 com.apple.private.persona-mgmt entitlement")
+                diagnosis.append("    → 原因1: build-ipa.sh 的 ldid -S Support/TrollHax.entitlements 步骤未生效")
+                diagnosis.append("    → 原因2: TrollStore 安装时未保留特权 entitlements (可能 TrollStore 版本过旧)")
+                diagnosis.append("    → 修复: 检查 scripts/build-ipa.sh 的签名段；确认 TrollStore ≥ 1.1.1；卸载重装 TrollHax")
+            }
+            if hasPersonaMgmt && !hasNoSandbox {
+                if severity != "critical" { severity = "high" }
+                diagnosis.append("[A2 HIGH] TrollHax 主二进制有 persona-mgmt 但缺 no-sandbox (影响 App Bundle 写)")
+            }
+
+            if setuidCount == 0 {
+                if severity != "critical" { severity = "high" }
+                diagnosis.append("[B HIGH] 所有 TSRootBinaries helper 都没有 setuid 位")
+                diagnosis.append("    → TrollStore 未应用 Info.plist TSRootBinaries 声明的 setuid")
+                diagnosis.append("    → setuid fallback 路径不可用；必须走 persona spawn 链路")
+                diagnosis.append("    → 修复: 升级 TrollStore 到 ≥ 1.1.1；卸载重装 TrollHax")
+            } else if setuidCount < totalCount {
+                diagnosis.append("[B WARN] 部分 helper 有 setuid 位 (\(setuidCount)/\(totalCount))——setuid fallback 部分可用")
+            } else if totalCount > 0 {
+                diagnosis.append("[B OK] 所有 helper 都有 setuid 位 (\(setuidCount)/\(totalCount))——setuid fallback 路径可用")
+            }
+
+            if let code = spawnTest["code"] as? Int {
+                if code == 85 {
+                    if severity == "ok" { severity = "critical" }
+                    diagnosis.append("[C CRITICAL] posix_spawn 返回 85 (ENOSYS)——persona spawn 被内核拒")
+                    if hasPersonaMgmt {
+                        diagnosis.append("    → persona-mgmt entitlement 存在但被 iOS \(v.majorVersion).\(v.minorVersion) AMFI 拒绝")
+                        diagnosis.append("    → iOS 17+ 高发：TrollHax 需双架构原生运行 (arm64+arm64e)")
+                        diagnosis.append("    → 检查 TrollHax 主二进制 lipo -info 是否含 arm64e slice")
+                    } else {
+                        diagnosis.append("    → persona-mgmt entitlement 不存在 (见 [A])")
+                    }
+                } else if code == 0 {
+                    if let out = spawnTest["stdout"] as? String, out.contains("uid=0") {
+                        diagnosis.append("[C OK] persona spawn 工作正常，uid=0")
+                    } else if let out = spawnTest["stdout"] as? String, !out.isEmpty {
+                        if severity != "critical" { severity = "high" }
+                        diagnosis.append("[C HIGH] spawnRoot 成功但 uid!=0——persona 属性未真正生效")
+                    } else {
+                        diagnosis.append("[C WARN] spawnRoot code=0 但空输出，无法确认提权状态")
+                    }
+                } else if code == -2 {
+                    diagnosis.append("[C WARN] spawnRoot 超时")
+                } else {
+                    diagnosis.append("[C INFO] spawnRoot code=\(code)")
+                }
             }
         }
 

@@ -45,6 +45,9 @@ final class DeviceProbe: ObservableObject {
         let appCount: Int                  // 已安装 App 数量
         let workspaceSize: String          // 工作区大小
         let batteryLevel: String           // 电池电量
+        // v6.6.10：越狱环境（none / rootless / rootHide）——决定提权路径
+        let jailbreakEnv: String
+        let jailbreakRoot: String
     }
 
     @Published var lastReport: Report?
@@ -153,16 +156,18 @@ final class DeviceProbe: ObservableObject {
             storageTotal: storage.total, storageFree: storage.free,
             memoryTotal: memoryTotal, screenSize: screenSize,
             appCount: appCount, workspaceSize: workspaceSize,
-            batteryLevel: batteryLevel
+            batteryLevel: batteryLevel,
+            jailbreakEnv: JBEnvironment.kind.rawValue,
+            jailbreakRoot: JBEnvironment.rootPrefix.isEmpty ? "(none)" : JBEnvironment.rootPrefix
         )
         // v2.9.144：@Published 后台线程赋值会触发 SwiftUI 崩溃，挪主线程回写
         if Thread.isMainThread {
             lastReport = report
-            AuditLog.shared.log("device.probe", detail: "ready=\(ready) trollStore=\(trollStore) entsOK=\(entitlementsOK) tfpid=\(taskForPid) container=\(containerWrite)")
+            AuditLog.shared.log("device.probe", detail: "ready=\(ready) trollStore=\(trollStore) jb=\(JBEnvironment.kind.rawValue) entsOK=\(entitlementsOK) tfpid=\(taskForPid) container=\(containerWrite)")
         } else {
             DispatchQueue.main.async {
                 self.lastReport = report
-                AuditLog.shared.log("device.probe", detail: "ready=\(ready) trollStore=\(trollStore) entsOK=\(entitlementsOK) tfpid=\(taskForPid) container=\(containerWrite)")
+                AuditLog.shared.log("device.probe", detail: "ready=\(ready) trollStore=\(trollStore) jb=\(JBEnvironment.kind.rawValue) entsOK=\(entitlementsOK) tfpid=\(taskForPid) container=\(containerWrite)")
             }
         }
         return report
@@ -173,8 +178,8 @@ final class DeviceProbe: ObservableObject {
     private func detectTrollStore() -> Bool {
         if getenv("TROLLSTORE") != nil { return true }
         if FileManager.default.fileExists(atPath: "/.TrollStore") { return true }
-        if FileManager.default.fileExists(atPath: "/var/jb") { return true }
-        if FileManager.default.fileExists(atPath: "/private/preboot/jb") { return true }
+        // v6.6.10：删除 "/var/jb" 与 "/private/preboot/jb" 判定 —— 那是**越狱**路径，
+        // 不是 TrollStore 标志。原逻辑在 Relaxin/rootHide/Dopamine 设备上必然误报。
         if AppCatalog.list().contains(where: { $0.bundleId == "com.opa334.TrollStore" }) { return true }
         // v2.9.159：AppCatalog 兜底——直接扫容器目录找 TrollStore.app (不依赖枚举结果）
         for root in ["/var/containers/Bundle/Application", "/private/var/containers/Bundle/Application"] {
