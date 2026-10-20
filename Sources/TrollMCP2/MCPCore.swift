@@ -1087,6 +1087,8 @@ public final class ToolRegistry: ObservableObject {
         // v3.1.46: 删 PingTool (shell.exec 可以实现：shell.exec("ping -c 4 xxx")）
         // v3.1.40: device 大工具 + 子命令 (合并 4 个 device.* 工具）
         register(DeviceExecTool())
+        // v6.6.11：Hax 电脑——AI 可调用的 Alpine 工作站（exec/code/search/fetch/read/write/install）
+        register(HaxComputerTool())
         // v3.1.40: 删旧的 4 个 device.* 工具 (已合并到 device 大工具）
         register(MemoryTweakTool())   // v2.9.60：H5GG式内存修改 (需先注入MemoryTweak.dylib）
         // v3.1.34: control 大工具 + 子命令 (合并 10 个 control.* 工具）

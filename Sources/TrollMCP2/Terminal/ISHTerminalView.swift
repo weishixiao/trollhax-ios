@@ -10,6 +10,8 @@ import Combine
 ///   - TerminalEmulator：ANSI 解析 + 屏幕缓冲（OpenMinis 原版移植）
 struct ISHTerminalView: View {
     var showCloseButton: Bool = true
+    /// v6.6.11：启动后自动 cd /root（root 权限文件夹）
+    var autoCdRoot: Bool = false
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var vm = TerminalViewModel()
@@ -98,7 +100,7 @@ struct ISHTerminalView: View {
             }
         }
         .onAppear {
-            if let err = vm.start() {
+            if let err = vm.start(autoCdRoot: autoCdRoot) {
                 errorText = err
             }
         }
@@ -127,7 +129,8 @@ final class TerminalViewModel: ObservableObject {
     private var pendingRows = 24
 
     /// 启动 shell；返回错误文案（nil = 成功）
-    func start() -> String? {
+    /// - Parameter autoCdRoot: 启动后自动执行 `cd /root`（用户要求：终端默认落在 root 目录）
+    func start(autoCdRoot: Bool = false) -> String? {
         guard !started else { return nil }
 
         // 输出合批：iSH 的 read 会以 4–24 字节小碎片高频回调，
@@ -166,6 +169,12 @@ final class TerminalViewModel: ObservableObject {
             return err
         }
         started = true
+        // v6.6.11：shell 就绪后自动进入 /root（HOME 已是 /root，但 cwd 仍是 /）
+        if autoCdRoot {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.session.send("cd /root && clear\n")
+            }
+        }
         return nil
     }
 

@@ -1,13 +1,13 @@
 import SwiftUI
 import UIKit
 
-/// v6.6.9：「Minis 电脑」——Alpine Linux 沙盒管理面板（移植自 OpenMinis RootfsManagement + FileBrowser）。
+/// v6.6.9：「Hax 电脑」——Alpine Linux 沙盒管理面板（移植自 OpenMinis RootfsManagement + FileBrowser）。
 ///
 /// 提供三块能力：
 ///   1. 环境状态：rootfs 是否就绪、占用空间、引擎开关
 ///   2. 文件浏览：直接浏览 Alpine 的 /root /home /tmp /etc（fakefs 落盘在 Documents/alpine-rootfs/data）
 ///   3. 快捷操作：打开终端、重置 rootfs
-struct MinisComputerView: View {
+struct HaxComputerView: View {
     @State private var rootfsInstalled = false
     @State private var rootfsSize: Int64 = 0
     @State private var engineEnabled = UserDefaults.standard.bool(forKey: "alpineEngineEnabled")
@@ -107,7 +107,7 @@ struct MinisComputerView: View {
                     .font(.caption2)
             }
         }
-        .navigationTitle("Minis 电脑")
+        .navigationTitle("Hax 电脑")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: refresh)
         .sheet(isPresented: $showTerminal) {
@@ -239,7 +239,7 @@ struct AlpineFileBrowserView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.subheadline).lineLimit(1)
                 if let s = item.size {
-                    Text(MinisComputerView.humanSize(s))
+                    Text(HaxComputerView.humanSize(s))
                         .font(.caption2).foregroundColor(.secondary)
                 }
             }
