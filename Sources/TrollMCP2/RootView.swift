@@ -205,6 +205,16 @@ struct ConversationDrawerView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(.blue)
             }
+            // v6.6.8：抽屉头部设置入口（用户要求：会话界面侧滑→抽屉→设置，
+            // 无需退回主界面找设置按钮，抽屉里就能直达）
+            Button(action: {
+                withAnimation { ui.drawerOpen = false }
+                ui.settingsPresented = true
+            }) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
             Button(action: { withAnimation { ui.drawerOpen = false } }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .semibold))
