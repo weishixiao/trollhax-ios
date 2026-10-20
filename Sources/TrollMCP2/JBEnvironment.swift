@@ -103,18 +103,83 @@ enum JBEnvironment {
     /// 返回 nil 表示没有可用的越狱提权工具（此时只能靠自身 helper 的 setuid 位）。
     static func rootLaunchPath() -> String? {
         guard isJailbroken else { return nil }
+        // v6.6.13：扩大探测范围——不同越狱管理器放的位置差异很大
         let candidates = [
-            "/usr/bin/sudo",            // Dopamine / palera1n 自带
+            "/usr/bin/sudo",                  // Dopamine / palera1n
             "/usr/libexec/sudo",
+            "/bin/sudo",
             "/usr/bin/su",
-            "/basebin/jbctl",           // rootHide 控制工具（rootHide 下需 libroot 才能访问）
-            "/usr/bin/env",
+            "/bin/su",
+            "/usr/bin/doas",
+            "/basebin/jbctl",                 // rootHide
+            "/usr/libexec/jbctl",
+            "/basebin/launchctl",
+            "/usr/bin/launchctl",
+            "/usr/libexec/sudo/sudo",
+            "/usr/bin/sudoedit",
         ]
         for rel in candidates {
             let p = rootPrefix + rel
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
         return nil
+    }
+
+    /// v6.6.13：越狱工具链完整性快照——诊断用。
+    /// 用于区分"越狱激活但工具链不全"和"越狱没真正激活"。
+    static func toolchainSnapshot() -> [String: Any] {
+        let fm = FileManager.default
+        let probes: [(String, String)] = [
+            ("jb_root",            "/var/jb"),
+            ("sileo",              "/var/jb/Applications/Sileo.app"),
+            ("zebra",              "/var/jb/Applications/Zebra.app"),
+            ("newterm",            "/var/jb/Applications/NewTerm.app"),
+            ("openssh_sshd",       "/var/jb/usr/sbin/sshd"),
+            ("dropbear",           "/var/jb/usr/sbin/dropbear"),
+            ("apt",                "/var/jb/usr/bin/apt"),
+            ("dpkg",               "/var/jb/usr/bin/dpkg"),
+            ("filza",              "/var/jb/Applications/Filza.app"),
+        ]
+        var found: [String: Bool] = [:]
+        for (name, path) in probes { found[name] = fm.fileExists(atPath: path) }
+        return ["probes": found, "root_prefix": rootPrefix]
+    }
+
+    /// v6.6.13：helper 属主诊断——setuid 只对 **root 属主** 的文件生效。
+    /// 若 helper 属主是 33(_www)/501(mobile)，即使 chmod u+s 也不会提权到 root。
+    static func helperOwnerReport(_ binDir: String) -> [String: Any] {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: binDir) else {
+            return ["error": "无法读取 \(binDir)"]
+        }
+        var rootOwned = 0, mobileOwned = 0, otherOwned = 0, setuidCount = 0, total = 0
+        var samples: [String] = []
+        for n in names where !n.hasPrefix(".") {
+            let p = binDir + "/" + n
+            guard let attrs = try? fm.attributesOfItem(atPath: p) else { continue }
+            total += 1
+            let uid = (attrs[.ownerAccountID] as? Int) ?? -1
+            let mode = (attrs[.posixPermissions] as? Int) ?? 0
+            if (mode & 0o4000) != 0 { setuidCount += 1 }
+            switch uid {
+            case 0:   rootOwned += 1
+            case 501: mobileOwned += 1
+            default:
+                otherOwned += 1
+                if samples.count < 5 { samples.append("\(n): uid=\(uid) mode=\(String(mode, radix: 8))") }
+            }
+        }
+        return [
+            "total": total,
+            "root_owned": rootOwned,
+            "mobile_owned": mobileOwned,
+            "other_owned": otherOwned,
+            "setuid": setuidCount,
+            "samples": samples,
+            "verdict": rootOwned == 0
+                ? "没有一个是 root 属主 —— setuid 无法提权，必须 chown root:wheel 先"
+                : "有 root 属主文件，补齐 setuid 即可提权"
+        ]
     }
 
     /// 越狱环境下 helper 是否具备 root 能力

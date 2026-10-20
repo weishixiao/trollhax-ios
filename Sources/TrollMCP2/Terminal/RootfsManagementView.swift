@@ -106,12 +106,12 @@ struct RootfsManagementView: View {
     private var browseSection: some View {
         Section {
             NavigationLink {
-                AlpineFileBrowserView(rootPath: Self.dataPath + "/root")
+                AlpineFileBrowserView(rootPath: "/root", viaAlpine: true)
             } label: {
                 Label("浏览 /root", systemImage: "folder.fill")
             }
             NavigationLink {
-                AlpineFileBrowserView(rootPath: Self.dataPath)
+                AlpineFileBrowserView(rootPath: "/", viaAlpine: true)
             } label: {
                 Label("浏览整个文件系统", systemImage: "internaldrive")
             }

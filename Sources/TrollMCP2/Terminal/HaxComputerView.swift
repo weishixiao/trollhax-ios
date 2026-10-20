@@ -119,7 +119,7 @@ struct HaxComputerView: View {
                 }
 
                 NavigationLink {
-                    AlpineFileBrowserView(rootPath: Self.dataPath)
+                    AlpineFileBrowserView(rootPath: "/", viaAlpine: true)
                 } label: {
                     Label("浏览 Alpine 文件", systemImage: "folder")
                 }
@@ -244,6 +244,11 @@ struct HaxComputerView: View {
 /// 只读 + 预览 + 删除，不提供写操作（写操作交给终端或 AI 工具）。
 struct AlpineFileBrowserView: View {
     let rootPath: String
+    /// v6.6.13：通过 guest 列目录。
+    /// iSH 的 fakefs **不是**标准目录结构——内容在 data/ 的哈希文件 + meta.db 里，
+    /// iOS 侧 FileManager 看不到 Alpine 的真实目录树（浏览 /root 永远是空目录）。
+    /// 打开此开关后用 `ls` 在 guest 内列举。
+    var viaAlpine: Bool = false
 
     @State private var currentPath: String
     @State private var items: [Item] = []
@@ -257,8 +262,9 @@ struct AlpineFileBrowserView: View {
         var name: String { url.lastPathComponent }
     }
 
-    init(rootPath: String) {
+    init(rootPath: String, viaAlpine: Bool = false) {
         self.rootPath = rootPath
+        self.viaAlpine = viaAlpine
         _currentPath = State(initialValue: rootPath)
     }
 
@@ -278,7 +284,7 @@ struct AlpineFileBrowserView: View {
                     ForEach(items) { item in
                         if item.isDir {
                             NavigationLink {
-                                AlpineFileBrowserView(rootPath: item.url.path)
+                                AlpineFileBrowserView(rootPath: item.url.path, viaAlpine: viaAlpine)
                             } label: {
                                 row(item)
                             }
@@ -308,7 +314,39 @@ struct AlpineFileBrowserView: View {
         }
     }
 
+    /// v6.6.13：在 guest 内列举目录（fakefs 唯一正确方式）
+    private func loadViaAlpine() {
+        let quoted = currentPath.replacingOccurrences(of: "'", with: "'\\''")
+        // 输出格式：d|0|name  或  f|<bytes>|name
+        let cmd = "cd '\(quoted)' 2>/dev/null; for f in * .[!.]*; do [ -e \"$f\" ] || continue; if [ -d \"$f\" ]; then echo \"d|0|$f\"; else echo \"f|$(wc -c < \"$f\" 2>/dev/null || echo 0)|$f\"; fi; done"
+        let r = ISHEngine.exec(cmd, timeout: 30)
+        if r.exitCode != 0 && r.output.isEmpty {
+            items = []
+            errorText = "读取失败（引擎未就绪）：\(r.output.prefix(120))"
+            return
+        }
+        var out: [Item] = []
+        for line in r.output.components(separatedBy: .newlines) {
+            let line2 = line.trimmingCharacters(in: .whitespaces)
+            guard !line2.isEmpty else { continue }
+            let parts = line2.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 3 else { continue }
+            let isDir = parts[0] == "d"
+            let size = Int64(parts[1].trimmingCharacters(in: .whitespaces)) ?? 0
+            let name = parts[2]
+            if name == "." || name == ".." || name.isEmpty { continue }
+            let full = currentPath.hasSuffix("/") ? currentPath + name : currentPath + "/" + name
+            out.append(Item(url: URL(fileURLWithPath: full), isDir: isDir, size: isDir ? nil : size))
+        }
+        items = out.sorted {
+            if $0.isDir != $1.isDir { return $0.isDir && !$1.isDir }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        errorText = items.isEmpty ? "（目录为空或引擎未启动）" : nil
+    }
+
     private func load() {
+        if viaAlpine { loadViaAlpine(); return }
         do {
             let list = try FileManager.default.contentsOfDirectory(
                 at: URL(fileURLWithPath: currentPath),
