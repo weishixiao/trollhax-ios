@@ -134,16 +134,18 @@ struct ChatView: View {
                 }
             }, alignment: .top)
             // v6.2.7：边缘侧滑开关会话抽屉（用户反馈"会话页侧滑无法打开添加新对话页"）。
-            // 左缘(x<40)右滑 → 打开抽屉(会话列表/新建入口)；抽屉开时左滑 → 关闭。
+            // v6.6.8：加强——左侧 60% 屏幕都能触发（原 x<44 边缘太窄，用户要求"会话页侧滑打开抽屉"）；
+            // minimumDistance 24→12、阈值 60→40 更灵敏。抽屉开时左滑 → 关闭。
             // 用 simultaneousGesture 不阻挡消息列表垂直滚动；水平主导判定防误触。
             .simultaneousGesture(
-                DragGesture(minimumDistance: 24, coordinateSpace: .global)
+                DragGesture(minimumDistance: 12, coordinateSpace: .global)
                     .onEnded { value in
                         let dx = value.translation.width
                         let dy = value.translation.height
-                        guard abs(dx) > abs(dy) * 1.4, abs(dx) > 60 else { return }
+                        guard abs(dx) > abs(dy) * 1.4, abs(dx) > 40 else { return }
                         let ui = AppUIState.shared
-                        if value.startLocation.x < 44 && dx > 0 && !ui.drawerOpen {
+                        let leftHalfThreshold: CGFloat = UIScreen.main.bounds.width * 0.6
+                        if value.startLocation.x < leftHalfThreshold && dx > 0 && !ui.drawerOpen {
                             withAnimation { ui.drawerOpen = true }
                         } else if dx < 0 && ui.drawerOpen {
                             withAnimation { ui.drawerOpen = false }
