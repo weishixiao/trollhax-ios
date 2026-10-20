@@ -124,8 +124,9 @@ struct AboutAuthorView: View {
         [
             // v6.4.7：按用户要求补上作者与本项目
             // v6.5.1：用户要求保留开源致谢中的作者行（此前误删）
-            ("🛠️", "TrollHax", "ZeenAE"),
-            ("🧰", "TrollHax（本项目）", "iOS 全栈工具箱"),
+            // v6.6.8：开源致谢里 TrollHax → TrollAgent（用户要求；致谢保留上游/上游 fork 的品牌名）
+            ("🛠️", "TrollAgent", "ZeenAE"),
+            ("🧰", "TrollAgent（本项目）", "iOS 全栈工具箱"),
             ("💉", "TrollFools / ElleKit", "(Lessica / rootless)"),
             ("⚙️", "Theos", "toolchain"),
             ("🔐", "ldid / insert_dylib / optool", "sign & inject"),
