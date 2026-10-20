@@ -206,8 +206,7 @@ final class TerminalViewModel: ObservableObject {
                 out.append(contentsOf: [0x08, 0x20, 0x08])
             case 0x0D:                       // 回车
                 out.append(contentsOf: [0x0D, 0x0A])
-            case 0x0A:                       // 换行（避免 
- 双换）
+            case 0x0A:                       // 换行（避免 CRLF 重复换行）
                 out.append(contentsOf: [0x0D, 0x0A])
             case 0x00..<0x20:                // 其他控制字符不回显
                 break
