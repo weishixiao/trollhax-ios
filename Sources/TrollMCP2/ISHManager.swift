@@ -54,6 +54,18 @@ enum ISHEngine {
     }
     private static var dataPath: String { rootfsDir + "/data" }
 
+    /// v6.6.12：重置引擎运行态（不重启 App）。
+    /// 崩溃或 bind 污染后，让下一次 exec 重新走 ensureBooted（重新解压/boot）。
+    static func resetRuntimeState() {
+        lock.lock()
+        state = .idle
+        spawnFailCount = 0
+        mountedBindPoints.removeAll()
+        lock.unlock()
+        ShellDiag.log("engine.resetRuntimeState: state→idle")
+        AuditLog.shared.log("engine.reset", detail: "state reset to idle")
+    }
+
     static var isBooted: Bool {
         if case .booted = state { return true }
         return false
@@ -398,10 +410,24 @@ enum ISHEngine {
         // 依据：用户 11 条崩溃日志经 base= 偏移符号化，100% 落在 iSH x86 模拟器内部
         // （cpu_run_to_interrupt +1204 / poll_wakeup +48 / err_map +180 / task_run_current），
         // 即 arm64 真机上 iSH 执行时反复段错误 → 整个 App 被系统杀掉。
-        // 默认关闭；设置 → 安全 → 「Alpine/iSH 引擎」可开启（自行承担闪退风险）。
+        //
+        // v6.6.12：**AI 按需自动开启**——门控不再是一刀切。
+        // 用户诉求：「让应用调用所有工具时，AI 可以直接打开调用」。
+        // 现在逻辑：
+        //   ① autoStartEngine（默认 true）+ 引擎关闭 → 自动开启并继续执行（写审计）
+        //   ② autoStartEngine = false → 保持旧行为，返回提示
+        // 由于已有 TrollishRunner 子进程隔离（引擎段错误只死子进程，主 App 不闪退），
+        // 自动开启的风险已大幅降低。
         if !UserDefaults.standard.bool(forKey: "alpineEngineEnabled") {
-            return ("[iSH 已关闭·防闪退] Alpine/iSH 引擎未启用（实测在 arm64 上执行会段错误闪退）。\n原生替代：ls/cat/grep/find/du/plutil/sqlite3/strings/nm/hexdump/objdump/python3(内置原生)。\n需要 apk add / git / 完整 tar 时：设置 → 安全 → 开启「Alpine/iSH 引擎」后重试。",
-                    127, false)
+            let autoStart = (UserDefaults.standard.object(forKey: "autoStartEngine") as? Bool) ?? true
+            if autoStart {
+                UserDefaults.standard.set(true, forKey: "alpineEngineEnabled")
+                ShellDiag.log("alpine engine auto-enabled on demand cmd=\(command.prefix(60))")
+                AuditLog.shared.log("engine.auto_enable", detail: "AI 调用需要 Alpine 的工具，已自动开启引擎")
+            } else {
+                return ("[iSH 已关闭·防闪退] Alpine/iSH 引擎未启用（实测在 arm64 上执行会段错误闪退）。\n原生替代：ls/cat/grep/find/du/plutil/sqlite3/strings/nm/hexdump/objdump/python3(内置原生)。\n需要 apk add / git / 完整 tar 时：调 engine {command:\"on\"} 开启，或到 设置 → 安全 → 开启「Alpine/iSH 引擎」。",
+                        127, false)
+            }
         }
         // v6.3.9：进程隔离（默认开启，设置里可关）——命令交给 `-trollish` 子进程内执行，
         // 引擎段错误只死子进程，主 App 不闪退（用户 11 次崩溃主因）。
