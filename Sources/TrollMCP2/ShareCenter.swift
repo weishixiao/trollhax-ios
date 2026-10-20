@@ -32,7 +32,7 @@ final class ShareCenter: ObservableObject {
 
     // MARK: - 文件分享：自建菜单（UIKit ActionSheet，绕开 ShareSheet）
 
-    /// 文件分享菜单：存储到文件 / 用其他 App 打开 / 取消
+    /// 文件分享菜单：复制全文 / 分享到其他 App / 存储到文件 / 取消
     func presentShareMenuFile(_ url: URL) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
             guard FileManager.default.fileExists(atPath: url.path) else {
@@ -41,6 +41,19 @@ final class ShareCenter: ObservableObject {
             }
             let alert = UIAlertController(title: "分享 \(url.lastPathComponent)",
                                           message: nil, preferredStyle: .actionSheet)
+            // v6.6.9：复制全文——用户反馈此前只能"存储到文件"，无法直接复制崩溃日志
+            alert.addAction(UIAlertAction(title: "复制全文", style: .default) { _ in
+                let text = (try? String(contentsOf: url, encoding: .utf8)) ?? url.path
+                UIPasteboard.general.string = text
+                self.showNotice("已复制全文 \(text.count) 字符")
+                AuditLog.shared.log("share.copy_full", detail: url.lastPathComponent)
+            })
+            // v6.6.9：分享到其他 App——纯文本走系统 UIActivityViewController。
+            // 旧版崩溃根因是"文件类型枚举 → MobileIcons 为 App 生成图标"；纯文本不触发该路径。
+            alert.addAction(UIAlertAction(title: "分享到其他 App", style: .default) { _ in
+                let text = (try? String(contentsOf: url, encoding: .utf8)) ?? url.path
+                self.presentSystemTextShare(text, title: url.lastPathComponent)
+            })
             alert.addAction(UIAlertAction(title: "存储到文件", style: .default) { _ in
                 self.saveToFiles(url)
             })
@@ -50,6 +63,29 @@ final class ShareCenter: ObservableObject {
             alert.addAction(UIAlertAction(title: "取消", style: .cancel))
             Self.anchor(alert)
             Self.topViewController()?.present(alert, animated: true)
+        }
+    }
+
+    /// v6.6.9：系统分享面板（只传纯文本 String，不传文件 URL）。
+    /// 规避 v4.3.46 记录的崩溃路径：文件分享会让系统枚举"支持该文档类型的 App"
+    /// 并让 MobileIcons 为它们生成图标 → 侧载环境 CoreImage SIGSEGV。
+    /// 纯文本 activityItems 不触发文档类型枚举，可安全分享到微信/QQ/备忘录等。
+    func presentSystemTextShare(_ text: String, title: String? = nil) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                self.showNotice("没有可分享的内容")
+                return
+            }
+            guard let top = Self.topViewController() else { return }
+            let vc = UIActivityViewController(activityItems: [trimmed], applicationActivities: nil)
+            if let pop = vc.popoverPresentationController {
+                pop.sourceView = top.view
+                pop.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.maxY, width: 1, height: 1)
+                pop.permittedArrowDirections = []
+            }
+            top.present(vc, animated: true)
+            AuditLog.shared.log("share.system_text", detail: "chars=\(trimmed.count) title=\(title ?? "-")")
         }
     }
 
@@ -64,6 +100,10 @@ final class ShareCenter: ObservableObject {
             let alert = UIAlertController(title: "分享", message: nil, preferredStyle: .actionSheet)
             alert.addAction(UIAlertAction(title: "拷贝", style: .default) { _ in
                 self.fallbackClipboard(trimmed)
+            })
+            // v6.6.9：分享到其他 App（系统面板，纯文本）
+            alert.addAction(UIAlertAction(title: "分享到其他 App", style: .default) { _ in
+                self.presentSystemTextShare(trimmed)
             })
             alert.addAction(UIAlertAction(title: "存储到文件", style: .default) { _ in
                 if let url = Self.writeTextToTemp(trimmed) {
