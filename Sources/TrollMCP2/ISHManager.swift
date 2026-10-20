@@ -18,7 +18,12 @@ enum ISHEngine {
     /// v4.0.4: 内核已根治污染——build_ish.sh 在编译期删掉 fakefs_bind_mount 写 meta.db 权限的两段
     /// （symlink+bind 表已足够映射，meta.db 写入冗余有害），bind 不再污染后续 spawn（rc=-13 消失）。
     /// 故恢复自动 bind（autoBindEnabled=true）重新启用 bind 大文件直读；autoBridge 仍作兜底处理未 bind 的 iOS 路径。
-    static var autoBindEnabled = true
+    // v6.6.16：**默认关闭 autoBind**。
+    // 用户实测「/ios_workspace 挂载不稳定、Alpine 引擎反复崩溃、file 都没了」——
+    // bind mount 会写 fakefs 的 meta.db，写入失败/中断即污染内核态，之后所有 spawn 都可能异常。
+    // 关闭后走 autoBridge（读 iOS 文件 → stdin 管道喂入 → guest 写 /tmp），慢一些但不会污染内核。
+    // 需要 bind 性能时可手动打开（设置里暂无开关，改此常量或后续暴露）。
+    static var autoBindEnabled = false
 
     /// 已成功挂载的 bind 点集合（幂等保护）。bind 成功后才加入；autoBind 只对未挂载点 bind 一次，
     /// 避免每次命令反复 bind 同一 iOS 顶层目录而污染 iSH 内核（v3.7.3 bindMountForCommand 验证过的做法）。
