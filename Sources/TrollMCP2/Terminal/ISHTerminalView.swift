@@ -127,6 +127,8 @@ final class TerminalViewModel: ObservableObject {
     private var started = false
     private var pendingCols = 80
     private var pendingRows = 24
+    /// 本地回显开关（无 tty 时 shell 不自带回显）
+    var localEchoEnabled = true
 
     /// 启动 shell；返回错误文案（nil = 成功）
     /// - Parameter autoCdRoot: 启动后自动执行 `cd /root`（用户要求：终端默认落在 root 目录）
@@ -170,16 +172,54 @@ final class TerminalViewModel: ObservableObject {
         }
         started = true
         // v6.6.11：shell 就绪后自动进入 /root（HOME 已是 /root，但 cwd 仍是 /）
-        if autoCdRoot {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                self?.session.send("cd /root && clear\n")
-            }
+        // v6.6.12：启动后先清屏，抹掉 "can't access tty; job control turned off" 噪声
+        let initCmd = autoCdRoot ? "cd /root && clear\n" : "clear\n"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.session.send(initCmd)
         }
         return nil
     }
 
     func sendInput(_ data: Data) {
+        // v6.6.12：Ctrl+C 在无 tty 下不会触发 SIGINT（0x03 只是普通字节），
+        // 客户端直接给 guest 发信号，否则用户按 Ctrl+C 完全没反应。
+        if data.count == 1 && data[0] == 0x03 {
+            session.signal(SIGINT)
+            localEcho("^C\r\n")
+            return
+        }
         session.send(data)
+        localEcho(data)
+    }
+
+    /// v6.6.12：本地回显。
+    /// cish_spawn 只接了管道、没有伪终端，shell 启动时明确报
+    /// "can't access tty; job control turned off" 且**不回显输入**——
+    /// 用户看不到自己打的字。这里在客户端补回显（等价于传统终端的 local echo）。
+    /// 已知边界：程序自身也会输出时可能出现短暂的重复显示（如 read/echo），可接受。
+    func localEcho(_ data: Data) {
+        guard localEchoEnabled else { return }
+        var out = Data()
+        for b in data {
+            switch b {
+            case 0x7F:                       // 退格
+                out.append(contentsOf: [0x08, 0x20, 0x08])
+            case 0x0D:                       // 回车
+                out.append(contentsOf: [0x0D, 0x0A])
+            case 0x0A:                       // 换行（避免 
+ 双换）
+                out.append(contentsOf: [0x0D, 0x0A])
+            case 0x00..<0x20:                // 其他控制字符不回显
+                break
+            default:
+                out.append(b)                // 可打印 ASCII / UTF-8 多字节原样
+            }
+        }
+        if !out.isEmpty { emulator.feed(out) }
+    }
+
+    private func localEcho(_ text: String) {
+        localEcho(Data(text.utf8))
     }
 
     func handleResize(cols: Int, rows: Int) {

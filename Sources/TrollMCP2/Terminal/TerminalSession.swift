@@ -124,6 +124,17 @@ final class TerminalSession {
         if let d = text.data(using: .utf8) { send(d) }
     }
 
+    /// v6.6.12：向 guest 发送信号。
+    /// 无 tty 时 Ctrl+C 的 0x03 字节只是普通输入，不会触发 SIGINT，必须由客户端直接发信号。
+    func signal(_ sig: Int32) {
+        stateLock.lock()
+        let p = pid
+        let ok = running
+        stateLock.unlock()
+        guard ok, p > 0 else { return }
+        _ = cish_kill(p, sig)
+    }
+
     /// 结束会话
     func stop() {
         stateLock.lock()
