@@ -1,0 +1,272 @@
+import SwiftUI
+import UIKit
+
+/// v6.6.9：「Minis 电脑」——Alpine Linux 沙盒管理面板（移植自 OpenMinis RootfsManagement + FileBrowser）。
+///
+/// 提供三块能力：
+///   1. 环境状态：rootfs 是否就绪、占用空间、引擎开关
+///   2. 文件浏览：直接浏览 Alpine 的 /root /home /tmp /etc（fakefs 落盘在 Documents/alpine-rootfs/data）
+///   3. 快捷操作：打开终端、重置 rootfs
+struct MinisComputerView: View {
+    @State private var rootfsInstalled = false
+    @State private var rootfsSize: Int64 = 0
+    @State private var engineEnabled = UserDefaults.standard.bool(forKey: "alpineEngineEnabled")
+    @State private var toast: String?
+    @State private var showResetConfirm = false
+    @State private var showTerminal = false
+
+    private static var rootfsPath: String {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("alpine-rootfs").path
+    }
+    private static var dataPath: String { rootfsPath + "/data" }
+
+    var body: some View {
+        List {
+            // MARK: 状态
+            Section {
+                HStack(spacing: 12) {
+                    Image(systemName: rootfsInstalled ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundColor(rootfsInstalled ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(rootfsInstalled ? "Alpine Linux 已就绪" : "尚未安装 rootfs")
+                            .font(.subheadline.weight(.semibold))
+                        Text(rootfsInstalled
+                             ? "首次打开终端会自动解压并启动内核"
+                             : "首次打开终端时会从内置 alpine-rootfs.zip 解压")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+
+                if rootfsInstalled && rootfsSize > 0 {
+                    HStack {
+                        Text("占用空间")
+                        Spacer()
+                        Text(Self.humanSize(rootfsSize)).foregroundColor(.secondary)
+                    }
+                }
+                Toggle(isOn: $engineEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Alpine/iSH 引擎")
+                        Text("关闭时终端不可用（arm64 上引擎偶发段错误）")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                }
+                .onChange(of: engineEnabled) { on in
+                    UserDefaults.standard.set(on, forKey: "alpineEngineEnabled")
+                    if !on { toast = "引擎已关闭，终端将不可用" }
+                }
+            } header: {
+                Text("环境")
+            }
+
+            // MARK: 快捷入口
+            Section {
+                Button {
+                    if !engineEnabled {
+                        toast = "请先开启 Alpine/iSH 引擎"
+                        return
+                    }
+                    showTerminal = true
+                } label: {
+                    Label("打开终端", systemImage: "apple.terminal")
+                }
+
+                NavigationLink {
+                    AlpineFileBrowserView(rootPath: Self.dataPath)
+                } label: {
+                    Label("浏览 Alpine 文件", systemImage: "folder")
+                }
+
+                NavigationLink {
+                    AlpineFileBrowserView(rootPath: FileManager.default
+                        .urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("Workspace").path)
+                } label: {
+                    Label("浏览 iOS 工作区", systemImage: "internaldrive")
+                }
+            } header: {
+                Text("文件")
+            }
+
+            // MARK: 危险操作
+            Section {
+                Button(role: .destructive) {
+                    showResetConfirm = true
+                } label: {
+                    Label("重置 Linux 环境", systemImage: "arrow.counterclockwise.circle")
+                }
+                .disabled(!rootfsInstalled)
+            } header: {
+                Text("维护")
+            } footer: {
+                Text("重置会删除 Alpine 内安装的所有软件包和用户文件（iOS 工作区不受影响）。重置后请重启 App 让内核重新安装。")
+                    .font(.caption2)
+            }
+        }
+        .navigationTitle("Minis 电脑")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: refresh)
+        .sheet(isPresented: $showTerminal) {
+            CompatNav { ISHTerminalView(showCloseButton: true) }
+        }
+        .alert("重置 Linux 环境？", isPresented: $showResetConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("重置", role: .destructive) { performReset() }
+        } message: {
+            Text("将删除 \(Self.rootfsPath) 下的全部内容。此操作不可撤销。")
+        }
+        .overlay(alignment: .bottom) {
+            if let t = toast {
+                Text(t)
+                    .font(.footnote)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(Color.black.opacity(0.78), in: Capsule())
+                    .foregroundColor(.white)
+                    .padding(.bottom, 28)
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { toast = nil }
+                    }
+            }
+        }
+    }
+
+    private func refresh() {
+        let fm = FileManager.default
+        rootfsInstalled = fm.fileExists(atPath: Self.dataPath)
+        rootfsSize = Self.directorySize(Self.rootfsPath)
+        engineEnabled = UserDefaults.standard.bool(forKey: "alpineEngineEnabled")
+    }
+
+    private func performReset() {
+        do {
+            if FileManager.default.fileExists(atPath: Self.rootfsPath) {
+                try FileManager.default.removeItem(atPath: Self.rootfsPath)
+            }
+            toast = "已重置，请重启 App 重新安装环境"
+            refresh()
+        } catch {
+            toast = "重置失败：\(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - 工具
+
+    private static func directorySize(_ path: String) -> Int64 {
+        let url = URL(fileURLWithPath: path)
+        guard let en = FileManager.default.enumerator(at: url,
+                                                     includingPropertiesForKeys: [.fileSizeKey],
+                                                     options: [.skipsHiddenFiles]) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in en {
+            if let size = try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
+    }
+
+    static func humanSize(_ bytes: Int64) -> String {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f.string(fromByteCount: bytes)
+    }
+}
+
+// MARK: - Alpine 文件浏览器
+
+/// 简易文件浏览器（浏览 fakefs 落盘目录 / iOS 工作区）。
+/// 只读 + 预览 + 删除，不提供写操作（写操作交给终端或 AI 工具）。
+struct AlpineFileBrowserView: View {
+    let rootPath: String
+
+    @State private var currentPath: String
+    @State private var items: [Item] = []
+    @State private var errorText: String?
+
+    struct Item: Identifiable {
+        let url: URL
+        let isDir: Bool
+        let size: Int64?
+        var id: String { url.path }
+        var name: String { url.lastPathComponent }
+    }
+
+    init(rootPath: String) {
+        self.rootPath = rootPath
+        _currentPath = State(initialValue: rootPath)
+    }
+
+    var body: some View {
+        List {
+            if let err = errorText {
+                Section {
+                    Text(err).font(.footnote).foregroundColor(.red)
+                }
+            }
+            if items.isEmpty && errorText == nil {
+                Section {
+                    Text("（空目录）").foregroundColor(.secondary).font(.footnote)
+                }
+            } else {
+                Section {
+                    ForEach(items) { item in
+                        if item.isDir {
+                            NavigationLink {
+                                AlpineFileBrowserView(rootPath: item.url.path)
+                            } label: {
+                                row(item)
+                            }
+                        } else {
+                            row(item)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle((currentPath as NSString).lastPathComponent)
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private func row(_ item: Item) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: item.isDir ? "folder.fill" : "doc.text")
+                .foregroundColor(item.isDir ? .blue : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name).font(.subheadline).lineLimit(1)
+                if let s = item.size {
+                    Text(MinisComputerView.humanSize(s))
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    private func load() {
+        do {
+            let list = try FileManager.default.contentsOfDirectory(
+                at: URL(fileURLWithPath: currentPath),
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+                options: [.skipsHiddenFiles]
+            )
+            var out: [Item] = []
+            for u in list {
+                let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+                out.append(Item(url: u, isDir: v?.isDirectory ?? false,
+                                size: v?.fileSize.map { Int64($0) }))
+            }
+            items = out.sorted {
+                if $0.isDir != $1.isDir { return $0.isDir && !$1.isDir }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+            errorText = nil
+        } catch {
+            items = []
+            errorText = "读取失败：\(error.localizedDescription)"
+        }
+    }
+}

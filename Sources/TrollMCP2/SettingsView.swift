@@ -218,6 +218,16 @@ struct SettingsView: View {
                              subtitle: "SSH 连接远程服务器 · 远程终端被控制",
                              icon: "terminal.fill", color: .teal,
                              destination: AnyView(RemoteAccessView())),
+                // v6.6.9：本地终端（移植自 OpenMinis，iSH 引擎交互式 shell）
+                SettingsItem(title: "终端",
+                             subtitle: "Alpine Linux 交互式 shell · 完整 ANSI 终端",
+                             icon: "apple.terminal", color: .black,
+                             destination: AnyView(ISHTerminalView(showCloseButton: false))),
+                // v6.6.9：Minis 电脑（rootfs 管理 + Alpine 文件浏览）
+                SettingsItem(title: "Minis 电脑",
+                             subtitle: "Linux 环境状态 · 文件浏览 · 重置 rootfs",
+                             icon: "desktopcomputer", color: .indigo,
+                             destination: AnyView(MinisComputerView())),
                 SettingsItem(title: L10n.t("row_browser"),
                              subtitle: "悬浮窗 · AI 可控制 · 蓝框高亮",
                              icon: "globe.asia.australia.fill", color: .cyan,
