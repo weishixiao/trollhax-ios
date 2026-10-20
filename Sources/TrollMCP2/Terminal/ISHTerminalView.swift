@@ -78,8 +78,10 @@ struct ISHTerminalView: View {
         .navigationTitle(vm.emulator.title.isEmpty ? "终端" : vm.emulator.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if showCloseButton {
-                ToolbarItem(placement: .navigationBarLeading) {
+            // v6.6.10：条件必须放在 ToolbarItem 内部——ToolbarContentBuilder 的 if 需要 iOS 16，
+            // 项目部署目标是 iOS 15，否则报 'buildIf' is only available in iOS 16.0 or newer。
+            ToolbarItem(placement: .navigationBarLeading) {
+                if showCloseButton {
                     Button { dismiss() } label: { Image(systemName: "xmark") }
                 }
             }
@@ -204,5 +206,30 @@ final class TerminalViewModel: ObservableObject {
 
     deinit {
         session.stop()
+    }
+}
+
+
+// MARK: - 快捷键按钮（移植自 OpenMinis ISHTerminalView.swift）
+
+/// 终端键盘附件栏的单个按键
+struct QuickCommandButton: View {
+    let label: String
+    let icon: String
+    var isActive: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.caption)
+                Text(label).font(.caption)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isActive ? Color.blue : Color(white: 0.25))
+            .foregroundColor(isActive ? .white : .green)
+            .cornerRadius(6)
+        }
     }
 }
