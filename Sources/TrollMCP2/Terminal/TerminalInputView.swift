@@ -158,11 +158,10 @@ class TerminalKeyInputView: UIView, UITextInput {
     }
 
     func unmarkText() {
-        // IME committed — send the composed text to the terminal
-        if let text = _markedText, !text.isEmpty,
-           let data = text.data(using: .utf8) {
-            onInput?(data)
-        }
+        // v6.6.12：**只清状态，不发送文本**。
+        // 原实现这里也 onInput?(_markedText)，而 insertText(_:) 已经发过一次，
+        // iOS 中文输入法上屏时两者都会触发 → 每个字发两遍（用户实测 su→susu、
+        // whoami→swhoami、数字→445555）。Apple 规范里 unmarkText 只取消 marked 状态。
         _markedText = nil
         _markedRange = NSRange(location: NSNotFound, length: 0)
     }
