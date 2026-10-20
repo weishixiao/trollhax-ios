@@ -95,6 +95,26 @@ class TerminalKeyInputView: UIView, UITextInput {
 
     var hasText: Bool { true }
 
+    // v6.6.16：**修复外部粘贴失效**。
+    // TerminalKeyInputView 是 first responder（隐藏的 UITextInput），长按编辑菜单
+    // 由它负责弹出；此前没实现 canPerformAction/paste，菜单里要么没有"粘贴"，
+    // 要么点了没反应——用户实测"外部无法粘贴命令到终端"。
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)) {
+            return UIPasteboard.general.hasStrings
+        }
+        // 只保留粘贴，屏蔽复制/查询/听写等无关项
+        return false
+    }
+
+    // 注意：UIResponder 没有 paste(_:) 的默认实现（那是 UIResponderStandardEditActions），
+    // 所以这里不能写 override，否则编译报 "does not override any method from its superclass"。
+    @objc func paste(_ sender: Any?) {
+        guard let text = UIPasteboard.general.string, !text.isEmpty else { return }
+        // 统一走 onInput —— 与键盘输入同一条路径（含本地回显）
+        onInput?(Data(text.utf8))
+    }
+
     func insertText(_ text: String) {
         let t0 = TerminalRedrawLog.nowMs()
         // Stamp the pipeline entry time so the render side can log

@@ -268,6 +268,12 @@ static volatile sig_atomic_t cish_handler_installed = 0;
 
 int cish_engine_broken(void) { return cish_engine_broken_flag; }
 
+/// v6.6.16：重置引擎崩溃标志。
+/// 旧实现一旦 __segv_handler 置位就永久拒绝（只有重启 App 能恢复），
+/// 导致用户遇到「Alpine 环境挂了」后再也无法使用。
+/// 重置后允许重新 boot（若崩溃是 bind 污染/临时状态引起，重启即可恢复）。
+void cish_reset_engine_broken(void) { cish_engine_broken_flag = 0; }
+
 static void cish_engine_segv_handler(int sig, siginfo_t *info, void *uctx) {
     ucontext_t *uc = (ucontext_t *)uctx;
     uintptr_t pc = (uintptr_t)uc->uc_mcontext->__ss.__pc;

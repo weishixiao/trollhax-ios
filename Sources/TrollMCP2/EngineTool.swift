@@ -1,4 +1,5 @@
 import Foundation
+import CISH
 
 /// v6.6.12：引擎控制工具 —— 让 AI 自主管理 Alpine/iSH 引擎。
 ///
@@ -59,11 +60,20 @@ final class EngineTool: MCPTool {
             message = "引擎已启用，未 boot（首次调用会解压 rootfs，约 5-10 秒）"
         }
 
+        let health = ISHEngine.rootfsHealth()
+        if !health.looksIntact {
+            message += " ｜ rootfs 异常：\(health.detail)"
+        }
         return [
             "message": message,
             "engine_enabled": enabled,
             "auto_start": autoStart,
             "kernel_booted": booted,
+            "rootfs_health": [
+                "intact": health.looksIntact,
+                "detail": health.detail,
+                "size_mb": health.sizeBytes / 1024 / 1024
+            ],
             "child_isolation": isolated,
             "jailbreak": JBEnvironment.kind.rawValue,
             "alpine_dependent_tools": [
@@ -102,11 +112,18 @@ final class EngineTool: MCPTool {
     private func restart() -> [String: Any] {
         // 重置 boot 状态——下次调用会重新 cish_boot（崩溃后恢复用）
         let wasEnabled = UserDefaults.standard.bool(forKey: "alpineEngineEnabled")
+        // v6.6.16：先清 C 层的崩溃标志（旧实现一经置位永久拒绝，只能重启 App）
+        cish_reset_engine_broken()
         ISHEngine.resetRuntimeState()
+        let health = ISHEngine.rootfsHealth()
+        var msg = wasEnabled
+            ? "引擎运行态已重置（崩溃标志已清除），下次命令会重新 boot"
+            : "引擎未启用；已重置运行态"
+        if !health.looksIntact {
+            msg += "。⚠️ rootfs 数据异常：\(health.detail) → 请到 Hax 电脑 → Rootfs 管理 → 重置 Rootfs，然后重启 App"
+          }
         return [
-            "message": wasEnabled
-                ? "引擎运行态已重置，下次命令会重新 boot（若反复崩溃请重启 App）"
-                : "引擎未启用；已重置运行态",
+            "message": msg,
             "engine_enabled": wasEnabled,
             "kernel_booted": ISHEngine.isBooted
         ]

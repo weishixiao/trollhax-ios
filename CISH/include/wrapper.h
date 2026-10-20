@@ -53,3 +53,6 @@ int cish_killpg(long pid, int sig);
 // v6.6.0：引擎线程崩溃恢复（SIGSEGV/SIGBUS 落在 libish 代码区时只终止该线程）
 void cish_install_crash_handler(void);
 int cish_engine_broken(void);
+
+/// v6.6.16：重置引擎崩溃标志，允许重新 boot（配合 engine {command:"restart"}）
+void cish_reset_engine_broken(void);

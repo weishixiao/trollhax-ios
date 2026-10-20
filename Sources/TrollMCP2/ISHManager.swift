@@ -62,8 +62,46 @@ enum ISHEngine {
         spawnFailCount = 0
         mountedBindPoints.removeAll()
         lock.unlock()
-        ShellDiag.log("engine.resetRuntimeState: state→idle")
-        AuditLog.shared.log("engine.reset", detail: "state reset to idle")
+        // v6.6.16：同时清 C 层崩溃标志——否则 restart 后仍被 "引擎此前已崩溃" 拦住
+        cish_reset_engine_broken()
+        ShellDiag.log("engine.resetRuntimeState: state→idle, broken flag cleared")
+        AuditLog.shared.log("engine.reset", detail: "state reset to idle + clear engine_broken")
+    }
+
+    /// v6.6.16：rootfs 健康检查——用户在「Alpine 环境挂了 / file 都没了」时用于判断
+    /// 是引擎崩溃还是 fakefs 数据损坏（后者只能重置重装）。
+    struct RootfsHealth {
+        var dataExists: Bool
+        var metaExists: Bool
+        var sizeBytes: Int64
+        var looksIntact: Bool
+        var detail: String
+    }
+
+    static func rootfsHealth() -> RootfsHealth {
+        let fm = FileManager.default
+        let dataExists = fm.fileExists(atPath: dataPath)
+        let meta = rootfsDir + "/meta.db"
+        let metaExists = fm.fileExists(atPath: meta)
+        var size: Int64 = 0
+        if let en = fm.enumerator(atPath: rootfsDir) {
+            var n = 0
+            for case let f as String in en {
+                n += 1
+                if n > 20000 { break }
+                if let attrs = try? fm.attributesOfItem(atPath: rootfsDir + "/" + f),
+                   let sz = attrs[.size] as? NSNumber { size += sz.int64Value }
+            }
+        }
+        // 正常 Alpine rootfs 解压后至少几十 MB；meta.db 缺失 = fakefs 元数据坏了
+        let intact = dataExists && metaExists && size > 5_000_000
+        let detail: String
+        if !dataExists { detail = "data/ 缺失 —— rootfs 未安装或已被删除" }
+        else if !metaExists { detail = "meta.db 缺失 —— fakefs 元数据损坏，必须重置重装" }
+        else if size <= 5_000_000 { detail = "体积异常（\(size / 1024) KB）—— rootfs 可能解压不完整" }
+        else { detail = "结构完整（\(size / 1024 / 1024) MB）" }
+        return RootfsHealth(dataExists: dataExists, metaExists: metaExists,
+                            sizeBytes: size, looksIntact: intact, detail: detail)
     }
 
     static var isBooted: Bool {

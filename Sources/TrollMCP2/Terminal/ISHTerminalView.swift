@@ -172,8 +172,11 @@ final class TerminalViewModel: ObservableObject {
         }
         started = true
         // v6.6.11：shell 就绪后自动进入 /root（HOME 已是 /root，但 cwd 仍是 /）
-        // v6.6.12：启动后先清屏，抹掉 "can't access tty; job control turned off" 噪声
-        let initCmd = autoCdRoot ? "cd /root && clear\n" : "clear\n"
+        // v6.6.16：提示符改成 root@xiao（用户要求；\u@\h 里的 hostname 来自 /etc/hostname=minis）
+        // 直接覆盖 PS1 最稳，不依赖改 /etc/hostname（fakefs 写入还可能失败）
+        let ps1 = "export PS1='\\u@xiao:\\w\\$ '; "
+        // 启动后先清屏，抹掉 "can't access tty; job control turned off" 噪声
+        let initCmd = ps1 + (autoCdRoot ? "cd /root && clear\n" : "clear\n")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             self?.session.send(initCmd)
         }
