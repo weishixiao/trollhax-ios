@@ -14,6 +14,8 @@ struct HaxComputerView: View {
     @State private var toast: String?
     @State private var showResetConfirm = false
     @State private var showTerminal = false
+    @State private var showPackages = false
+    @State private var packagesText = ""
 
     private static var rootfsPath: String {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -63,6 +65,47 @@ struct HaxComputerView: View {
                 Text("环境")
             }
 
+            // MARK: 引擎控制
+            Section {
+                HStack {
+                    Text("内核状态")
+                    Spacer()
+                    Text(ISHEngine.isBooted ? "已 boot" : "未启动")
+                        .foregroundColor(.secondary)
+                }
+                Button {
+                    guard engineEnabled else { toast = "请先开启 Alpine/iSH 引擎"; return }
+                    toast = "正在预热内核…"
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let err = ISHEngine.ensureBooted()
+                        DispatchQueue.main.async {
+                            toast = err == nil ? "内核已就绪" : "启动失败：\(err ?? "")"
+                        }
+                    }
+                } label: {
+                    Label("预热内核（首次约 5-10 秒）", systemImage: "bolt.fill")
+                }
+                .disabled(!engineEnabled)
+
+                Button {
+                    guard engineEnabled else { toast = "请先开启 Alpine/iSH 引擎"; return }
+                    toast = "读取已安装软件包…"
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let r = ISHEngine.exec("apk info 2>/dev/null | head -40; echo '---'; pip3 list 2>/dev/null | head -20", timeout: 40)
+                        DispatchQueue.main.async {
+                            packagesText = r.output.isEmpty ? "（读取失败）" : r.output
+                            showPackages = true
+                            toast = nil
+                        }
+                    }
+                } label: {
+                    Label("查看已安装软件包", systemImage: "list.bullet")
+                }
+                .disabled(!engineEnabled)
+            } header: {
+                Text("引擎")
+            }
+
             // MARK: 快捷入口
             Section {
                 Button {
@@ -88,6 +131,12 @@ struct HaxComputerView: View {
                 } label: {
                     Label("浏览 iOS 工作区", systemImage: "internaldrive")
                 }
+
+                NavigationLink {
+                    RootfsManagementView()
+                } label: {
+                    Label("Rootfs 管理（镜像源 / DNS / 重置）", systemImage: "shippingbox")
+                }
             } header: {
                 Text("文件")
             }
@@ -111,7 +160,20 @@ struct HaxComputerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: refresh)
         .sheet(isPresented: $showTerminal) {
-            CompatNav { ISHTerminalView(showCloseButton: true) }
+            CompatNav { ISHTerminalView(showCloseButton: true, autoCdRoot: true) }
+        }
+        .sheet(isPresented: $showPackages) {
+            CompatNav {
+                ScrollView {
+                    Text(packagesText)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                }
+                .navigationTitle("已安装软件包")
+                .navigationBarTitleDisplayMode(.inline)
+            }
         }
         .alert("重置 Linux 环境？", isPresented: $showResetConfirm) {
             Button("取消", role: .cancel) {}
