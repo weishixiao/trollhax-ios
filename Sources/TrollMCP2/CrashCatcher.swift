@@ -465,11 +465,19 @@ struct CrashLogView: View {
             // v2.9.179：同样只复制不弹分享面板
             ToolbarItem(placement: .navigationBarLeading) {
                 if !paths.isEmpty {
-                    Button {
-                        UIPasteboard.general.string = CrashCatcher.exportAll()
-                        toast = "已复制全部 \(paths.count) 条日志（分享面板在侧载环境不可用）"
-                    } label: {
-                        Image(systemName: "doc.on.doc")
+                    HStack(spacing: 16) {
+                        Button {
+                            UIPasteboard.general.string = CrashCatcher.exportAll()
+                            toast = "已复制全部 \(paths.count) 条日志"
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        Button {
+                            ShareCenter.shared.presentSystemTextShare(CrashCatcher.exportAll(),
+                                                                      title: "崩溃日志×\(paths.count)")
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
                     }
                 }
             }
@@ -543,6 +551,8 @@ struct CrashLogDetailView: View {
                     ScrollView {
                         Text(content!)
                             .font(.system(.footnote, design: .monospaced))
+                            // v6.6.9：允许长按选中片段复制（iOS 15+）
+                            .textSelection(.enabled)
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -551,13 +561,22 @@ struct CrashLogDetailView: View {
             .navigationTitle(URL(fileURLWithPath: path).lastPathComponent)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // v2.9.179：不弹分享面板（侧载环境 ShareSheet 枚举图标系统级 Segfault）——复制代替
+                // v6.6.9：复制 / 分享双入口（用户反馈此前无法直接复制、也无法分享到其他 App）
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        UIPasteboard.general.string = content ?? ""
-                        toast = "已复制全文（分享面板在侧载环境不可用）"
-                    } label: {
-                        Image(systemName: "doc.on.doc")
+                    HStack(spacing: 16) {
+                        Button {
+                            UIPasteboard.general.string = content ?? ""
+                            toast = "已复制全文 \(content?.count ?? 0) 字符"
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        Button {
+                            ShareCenter.shared.presentSystemTextShare(content ?? "",
+                                                                      title: URL(fileURLWithPath: path).lastPathComponent)
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .disabled((content ?? "").isEmpty)
                     }
                 }
                 ToolbarItem(placement: .navigationBarLeading) {
