@@ -35,6 +35,12 @@ echo ">>> OpenSSL: $(du -sh openssl-stage/lib | cut -f1)"
 echo ">>> building libHUD.a (desktop floating HUD core)"
 bash scripts/build-hud.sh
 
+# v6.7.0：VansonMod 内存引擎（GPL-3.0）——VansonEngine/ 的 ObjC++/C++ 内存扫描引擎编成
+# libVansonEngine.a，主 App（SwiftPM target VansonEngine）链接后 memory 工具走原生后端。
+# 必须在此之前跑完，否则 swift build 链接缺 libVansonEngine.a 失败。
+echo ">>> building libVansonEngine.a (VansonMod memory engine)"
+bash scripts/build-vanson.sh
+
 # v2.9.249: 部署目标 16→15 治本——按 ios16 编译会引用 iOS16+ 符号(URLRequest.httpMethod/timeoutInterval 等 availability 标注错误的 Swift setter),iOS 15.6 dyld 启动崩;降到 ios14 后编译器自动避免 iOS16+ API
 # v4.3.54: 双架构（arm64 + arm64e）——TrollHax 纯 arm64 在 A12+(arm64e 芯片)
 # 设备上以兼容模式运行，MobileIcons/CoreImage 在 compat 模式下处理图标异常 →

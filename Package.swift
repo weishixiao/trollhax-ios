@@ -60,6 +60,24 @@ let package = Package(
             path: "CLaunch",
             publicHeadersPath: "."
         ),
+        // v6.7.0：VansonEngine——VansonMod 内存引擎（GPL-3.0）桥接层。
+        // 把 VansonEngine/ 下的 ObjC++/C++ 内存扫描引擎编成 libVansonEngine.a（scripts/build-vanson.sh），
+        // SwiftPM 这边只负责导出 ObjC 头 + 链接静态库；主 App import VansonEngine 即可用
+        // VMMemoryEngine（搜索/读写/冻结/指针链）。
+        .target(
+            name: "VansonEngine",
+            path: "VansonEngine",
+            exclude: ["src", "README.md"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath(".")
+            ],
+            linkerSettings: [
+                .unsafeFlags(["-L", "vanson-stage/lib"]),
+                .linkedLibrary("VansonEngine"),
+                .linkedLibrary("c++")
+            ]
+        ),
         // fix3cy16 (P1)：CHev——hev-socks5-tunnel 桥接层（iOS 真机 slice 手动链接，
         //   避开 SwiftPM binaryTarget 平台选择问题）。依赖 scripts/build-ipa.sh 下载解压的
         //   hev-stage/lib/libhev-socks5-tunnel.a（ios-arm64 slice，Tun2SocksKit 5.16.0 release）
@@ -89,7 +107,9 @@ let package = Package(
                 "CISH",
                 "MitmCore",
                 "CMitm",
-                "CLaunch"
+                "CLaunch",
+                // v6.7.0：VansonMod 内存引擎（GPL-3.0）——memory 工具的原生扫描/读写/冻结实现
+                "VansonEngine"
             ],
             path: "Sources/TrollMCP2",
             exclude: ["Resources"],

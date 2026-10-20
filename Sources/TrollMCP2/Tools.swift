@@ -61,19 +61,31 @@ final class DeviceProbeTool: MCPTool {
     }
 }
 
-// MARK: - MemoryTweak (H5GG 式内存修改，通过注入的 dylib HTTP API 通信）
+// MARK: - MemoryTweak：VansonMod 原生引擎 + 向后兼容的 dylib HTTP 回退
 
 final class MemoryTweakTool: MCPTool {
     let definition = ToolDefinition(
         name: "memory",
-        summary: "Game memory modification (GameGuardian/H5GG style). Actions: attach / search / refine / write / freeze / unfreeze / status / frozen / results. Params: value (search/refine/write/freeze), type (int/int64/float/double/byte/short), address (0x hex, required for write/freeze/unfreeze). Requires MemoryTweak.dylib injected into target game.",
+        summary: "Game memory modification (GameGuardian/H5GG style). Two backends: (A) native — built-in VansonMod engine, works out of the box, attach by pid or bundle_id, supports exact/fuzzy scan, refine, filter, read/write, freeze; (B) legacy — HTTP proxy to MemoryTweak.dylib injected into target app. Params: action, target, bundle_id, pid, value, value2, type, address, offset, limit, mode. Native is default; set backend:legacy to force dylib mode.",
         parameters: [
-            "action": "attach (确认已注入并连接，injected dylib 后服务即已 attach，等价 status) / search (first scan) / refine (filter results) / write (set new value) / freeze (lock value) / unfreeze / status / frozen (list locked values)",
-            "value": "Value to search/write/freeze. e.g. 1000 coins, 50 HP",
-            "type": "Data type: int (integer, default) / int64 / float (decimal) / double / byte / short",
-            "address": "Memory address (0x hex format, required for write/freeze)"
+            "action": "attach (bind target process) / search (first exact scan) / fuzzy (first fuzzy scan) / refine (filter current results by new value) / filter (filter by condition) / results (page through results) / read (read memory at address) / write (set value) / read_raw (hex dump) / write_raw (hex write) / freeze (lock value) / unfreeze / frozen / status / clear / undo",
+            "backend": "native (default, built-in VansonMod engine) / legacy (HTTP → MemoryTweak.dylib on 127.0.0.1:8765)",
+            "target": "Process name or bundle id to attach (e.g. com.example.game). Same as bundle_id when it contains a dot.",
+            "bundle_id": "Bundle id of target app (attach)",
+            "pid": "PID of target process (attach; alternative to bundle_id)",
+            "value": "Value to search / write / freeze (search, refine, write, freeze)",
+            "value2": "Second value for between / range mode",
+            "type": "Data type: int(int32, default) / int64 / int16 / int8 / uint32 / float / double / string / byte / short",
+            "address": "Memory address (0x hex, required for read/write/read_raw/write_raw/freeze/unfreeze)",
+            "offset": "Results paging offset (results), default 0",
+            "limit": "Max results to return (results) or max scan results kept (search), default 50 / 2000",
+            "mode": "Fuzzy/filter mode: greater / less / between / increased / decreased / changed / unchanged"
         ],
-        prerequisites: ["目标游戏已injected MemoryTweak.dylib (先 inject enable MemoryTweak 到目标 App)", "attach/status 确认连接OK (HTTP 127.0.0.1:8765 可达)后才 search/refine/write/freeze"]
+        prerequisites: [
+            "native 后端：目标 App 需运行中；需 task_for_pid-allow entitlement（TrollHax 已内置）；越狱环境下目标若带加固/AMFI 保护可能拿不到 task port",
+            "legacy 后端：目标游戏已注入 MemoryTweak.dylib 且 127.0.0.1:8765 可达",
+            "search/fuzzy 是首扫，结果可能上万条；先 results 看几条，再用 refine 缩小，最后 write"
+        ]
     )
 
     private let port = 8765
@@ -82,7 +94,155 @@ final class MemoryTweakTool: MCPTool {
         guard let action = params["action"] as? String else {
             throw MCPError.invalidParams("action required")
         }
+        let backend = (params["backend"] as? String ?? "native").lowercased()
 
+        // 旧的 dylib 后端保持原样（用户显式指定 legacy 时走这里）
+        if backend == "legacy" {
+            return try legacyInvoke(action: action, params: params)
+        }
+        return try nativeInvoke(action: action, params: params)
+    }
+
+    // MARK: native（VansonMod 引擎）
+
+    private func nativeInvoke(action: String, params: [String: Any]) throws -> [String: Any] {
+        // 引擎阻塞式扫描，不能在主线程跑，否则 UI 卡死
+        if Thread.isMainThread {
+            var output: [String: Any] = [:]
+            var thrown: Error?
+            DispatchQueue.global(qos: .userInitiated).sync {
+                do { output = try self.nativeInvokeOffMain(action: action, params: params) }
+                catch { thrown = error }
+            }
+            if let e = thrown { throw e }
+            return output
+        }
+        return try nativeInvokeOffMain(action: action, params: params)
+    }
+
+    private func nativeInvokeOffMain(action: String, params: [String: Any]) throws -> [String: Any] {
+        let bridge = VansonMemoryBridge.shared
+        let type = VansonValueType.parse(params["type"] as? String) ?? .int32
+        let value = params["value"].map { "\($0)" }
+        let value2 = params["value2"].map { "\($0)" }
+
+        func requireAddress() throws -> UInt64 {
+            guard let raw = params["address"] as? String ?? (params["address"].map { "\($0)" }),
+                  let addr = VansonMemoryBridge.parseAddress(raw) else {
+                throw MCPError.invalidParams("address required (0x hex)")
+            }
+            return addr
+        }
+
+        switch action {
+        case "attach":
+            // 支持 pid 直接指定，或通过 bundle_id / target 找进程
+            if let pidNum = params["pid"], let pid = Int32("\(pidNum)") {
+                // pid_t == Int32，Swift 侧一致
+                let name = try bridge.attach(pid: pid)
+                return ["ok": true, "backend": "native", "pid": Int(pid), "process": name, "status": bridge.status]
+            }
+            guard let bundleRaw = params["bundle_id"] as? String ?? params["target"] as? String else {
+                throw MCPError.invalidParams("attach 需要 bundle_id / target / pid 之一")
+            }
+            let bundle = bundleRaw.trimmingCharacters(in: .whitespaces)
+            // findPid(by:)（ProcessTools.swift）已内含 libproc → ps → comm 列三级回退
+            let pid = findPid(by: bundle)
+            guard pid > 0 else {
+                throw MCPError.invalidParams("找不到运行中的进程: \(bundle)（确认 App 已启动；用 app 工具查 bundle_id）")
+            }
+            let name = try bridge.attach(pid: pid)
+            return ["ok": true, "backend": "native", "pid": Int(pid), "process": name, "status": bridge.status]
+
+        case "status", "frozen":
+            var out = bridge.status
+            out["ok"] = true
+            out["backend"] = "native"
+            return out
+
+        case "search":
+            guard let v = value else { throw MCPError.invalidParams("value required for search") }
+            let limit = Int("\(params["limit"] ?? 2000)") ?? 2000
+            let r = try bridge.searchExact(value: v, type: type, limit: limit)
+            return ["ok": true, "backend": "native", "count": r.count,
+                    "message": r.message, "type": type.rawValue,
+                    "hint": r.count > 0 ? "用 results 查看前几条，再用 refine 逐步缩小" : "换 type 或模糊搜索试试"]
+
+        case "fuzzy":
+            guard let v = value else { throw MCPError.invalidParams("value required for fuzzy") }
+            let mode = (params["mode"] as? String) ?? "changed"
+            let r = try bridge.searchFuzzy(mode: mode, value: v, value2: value2, type: type)
+            return ["ok": true, "backend": "native", "count": r.count,
+                    "message": r.message, "mode": mode]
+
+        case "refine":
+            guard let v = value else { throw MCPError.invalidParams("value required for refine") }
+            let r = try bridge.refine(value: v, type: type)
+            return ["ok": true, "backend": "native", "count": r.count, "message": r.message]
+
+        case "filter":
+            guard let v = value else { throw MCPError.invalidParams("value required for filter") }
+            let mode = (params["mode"] as? String) ?? "changed"
+            let r = try bridge.filter(mode: mode, value1: v, value2: value2, type: type)
+            return ["ok": true, "backend": "native", "count": r.count, "message": r.message]
+
+        case "results":
+            let offset = Int("\(params["offset"] ?? 0)") ?? 0
+            let limit = Int("\(params["limit"] ?? 50)") ?? 50
+            let items = try bridge.results(offset: offset, limit: limit, type: type)
+            return ["ok": true, "backend": "native", "total": bridge.resultCount,
+                    "offset": offset, "returned": items.count, "results": items]
+
+        case "read":
+            let addr = try requireAddress()
+            let len = Int("\(params["limit"] ?? 64)") ?? 64
+            let v = try bridge.read(address: addr, type: type, length: len)
+            return ["ok": true, "backend": "native",
+                    "address": String(format: "0x%llx", addr), "value": v, "type": type.rawValue]
+
+        case "write":
+            guard let v = value else { throw MCPError.invalidParams("value required for write") }
+            let addr = try requireAddress()
+            let ok = try bridge.write(address: addr, value: v, type: type)
+            return ["ok": ok, "backend": "native", "address": String(format: "0x%llx", addr),
+                    "value": v, "type": type.rawValue,
+                    "error": ok ? nil : "写入失败：地址不可写或越界"].compactMapValues { $0 }
+
+        case "read_raw":
+            let addr = try requireAddress()
+            let len = Int("\(params["limit"] ?? 64)") ?? 64
+            let hex = try bridge.readRaw(address: addr, length: len)
+            return ["ok": true, "backend": "native",
+                    "address": String(format: "0x%llx", addr), "length": len, "hex": hex]
+
+        case "write_raw":
+            guard let hex = params["value"] as? String ?? value else {
+                throw MCPError.invalidParams("value required (hex string) for write_raw")
+            }
+            let addr = try requireAddress()
+            let ok = try bridge.writeRaw(address: addr, hex: hex)
+            return ["ok": ok, "backend": "native", "address": String(format: "0x%llx", addr)]
+
+        case "clear":
+            try bridge.clearResults()
+            return ["ok": true, "backend": "native", "count": 0]
+
+        case "undo":
+            let n = bridge.undoLastWrite()
+            return ["ok": true, "backend": "native", "restored": n]
+
+        case "freeze", "unfreeze":
+            // 冻结走原生引擎 + 定时回写引擎（VMLockEngine）
+            throw MCPError.invalidParams("native 后端的 freeze 请用 legacy 方案或等待 v6.7.x 接入 VMLockEngine（当前原生后端支持 search/refine/write/read）")
+
+        default:
+            throw MCPError.invalidParams("unknown action: \(action)")
+        }
+    }
+
+    // MARK: legacy（注入的 MemoryTweak.dylib，127.0.0.1:8765）
+
+    private func legacyInvoke(action: String, params: [String: Any]) throws -> [String: Any] {
         let method: String
         let path: String
         var body: [String: Any] = [:]
