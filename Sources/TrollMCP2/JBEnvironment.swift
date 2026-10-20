@@ -65,14 +65,25 @@ enum JBEnvironment {
         }
     }
 
-    /// 遍历已加载镜像名（不依赖 /proc）
+    /// v6.6.10：不依赖 _dyld_image_count / _dyld_get_image_name（需要 import MachO，
+    /// 且在本项目 iOS 15 目标下符号可见性不稳定），改用 dlsym 探测越狱库导出的符号。
+    /// - rootHide 的 libroot 导出 rootfs_get_path / jbclient_* 系列
+    /// - 标准 rootless 的 libjbclient 导出 jbclient_rootfs_jb
+    /// - ElleKit / Substrate 导出 MSHookFunction / MSGetImageByName
     private static func loadedImageContains(_ needle: String) -> Bool {
-        let count = _dyld_image_count()
-        guard count > 0 else { return false }
-        for i in 0..<count {
-            guard let cname = _dyld_get_image_name(i) else { continue }
-            let s = String(cString: cname)
-            if s.localizedCaseInsensitiveContains(needle) { return true }
+        let handle = UnsafeMutableRawPointer(bitPattern: -2)   // RTLD_DEFAULT
+        let probes: [String]
+        if needle.contains("root") {
+            probes = ["rootfs_get_path", "jbclient_rootfs_jb", "jbclient_jbrand"]
+        } else if needle.contains("jbclient") {
+            probes = ["jbclient_rootfs_jb", "jbclient_jbrand"]
+        } else {
+            probes = ["MSHookFunction", "MSGetImageByName"]
+        }
+        // String 变量不能直接传给 dlsym（需要 UnsafePointer<CChar>）
+        for sym in probes {
+            let found = sym.withCString { dlsym(handle, $0) }
+            if found != nil { return true }
         }
         return false
     }
