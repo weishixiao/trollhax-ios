@@ -9,7 +9,11 @@ let package = Package(
         // v2.9.370：RSKGrowingTextView——成熟开源聊天输入框，自动高度+占位符，替代手写 UIViewRepresentable
         .package(url: "https://github.com/ruslanskorb/RSKGrowingTextView.git", from: "7.0.0"),
         // v3.0.37：ZIPFoundation——iSH rootfs 首次启动解压（OpenMinis 同款）
-        .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.19")
+        .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.19"),
+        // v6.8.0：MachOKit——Mach-O 静态解析（MIT，上游声明 iOS 13+）。
+        // 供 macho 工具读取头信息 / entitlements / codesign / 导出符号。
+        // 注意：它要求 swift-tools-version 5.10，CI 的 macos-latest（Swift 6.x）满足。
+        .package(url: "https://github.com/p-x9/MachOKit.git", from: "0.55.0")
     ],
     targets: [
         // v3.0.37：iSH-ARM64 C 包装层。头文件由 CI 的 build_ish.sh 生成到 ish-stage/include，
@@ -104,6 +108,8 @@ let package = Package(
             dependencies: [
                 .product(name: "RSKGrowingTextView", package: "RSKGrowingTextView"),
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
+                // v6.8.0：Mach-O 静态解析（macho 工具的后端）
+                .product(name: "MachOKit", package: "MachOKit"),
                 "CISH",
                 "MitmCore",
                 "CMitm",
