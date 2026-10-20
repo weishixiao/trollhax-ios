@@ -72,8 +72,13 @@ struct ChatView: View {
                                 Image(systemName: "line.horizontal.3")
                                     .font(.system(size: 18, weight: .semibold))
                             }
-                            // v6.2.7：按用户要求删除左上角 + 号新建会话按钮
-                            // （新建入口保留在侧滑抽屉头部 + 抽屉内长按管理）
+                            // v6.6.8：重新添加上左上角 + 号新建会话按钮（用户要求恢复；
+                            // 侧滑抽屉头部的新建入口仍保留，双入口一致）
+                            Button(action: { store.newConversation() }) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(.blue)
+                            }
                         }
                     }
                 }
