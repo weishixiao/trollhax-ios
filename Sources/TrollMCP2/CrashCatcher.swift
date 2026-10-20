@@ -26,6 +26,10 @@ enum CrashCatcher {
     // 真实崩溃点被掩盖（libsystem_platform.dylib 0x... + 480）。
     private static var crashDirC: UnsafeMutablePointer<CChar>?
     private static let crashDirCap = 1024
+    /// v6.6.9：Workspace 父目录 C 路径也固化——handler 里先 mkdir 父目录再 mkdir crash，
+    /// 修复"首次启动/重置数据后 Workspace 不存在 → mkdir 失败 → 崩溃日志丢失"的根因
+    /// （install() 早于 Workspace.ensure()，App 启动早期崩溃时父目录可能还没建）。
+    private static var crashParentC: UnsafeMutablePointer<CChar>?
     /// v6.2.4：handler 重入保护——backtrace 遍历 iSH 线程栈（swapcontext 边界）可能二次崩溃；
     /// 若 handler 自身段错误引发重入，直接恢复默认处理让系统兜底，避免无限递归。
     private static var inHandler: Int32 = 0
@@ -36,6 +40,32 @@ enum CrashCatcher {
     private static var sigImageBase: Int = 0
     /// dladdr 探测用的本镜像内静态变量地址
     private static var sigLocalProbe: Int = 0
+
+    // v6.6.9：信号处理器内禁止访问 Swift/ObjC 运行时——以下全部在 install() 正常上下文预缓存。
+    // 旧版在 handler 里调 strsignal()（可能 malloc）、Bundle.main.infoDictionary（Swift runtime）、
+    // UserDefaults.bool(forKey:)（文件 IO + 锁），崩溃现场堆已损坏时会二次段错误/死锁，
+    // 导致崩溃日志为空或只写一半——这是"闪退日志没记录"的根因。
+    private static let sigVersionCap = 64
+    private static var sigVersionBuf: UnsafeMutablePointer<CChar>?
+    private static var sigIshFlag: CChar = 48   // '0'=关 '1'=开，install() 时预读
+
+    // v6.6.9：信号名表——install() 用正常上下文填 7 个槽（6 个已 arm 信号 + "SIG?"），
+    // handler 内只用纯算术索引，完全不碰 Swift 字符串/字典。
+    private static let sigNameCap = 16
+    private static let sigSlotCount = 7
+    private static var sigNameTable: UnsafeMutablePointer<CChar>?
+
+    private static func sigSlot(_ s: Int32) -> Int {
+        switch s {
+        case SIGILL:  return 0
+        case SIGTRAP: return 1
+        case SIGABRT: return 2
+        case SIGFPE:  return 3
+        case SIGBUS:  return 4
+        case SIGSEGV: return 5
+        default:      return 6
+        }
+    }
 
     static func install() {
         // v6.2.8：固化主镜像基址——先试 dlsym(_mh_execute_header)（主可执行文件 mach header），
@@ -56,11 +86,44 @@ enum CrashCatcher {
         let c = UnsafeMutablePointer<CChar>.allocate(capacity: crashDirCap)
         if let u = (dir as NSString).utf8String { strcpy(c, u) }
         crashDirC = c
+        // v6.6.9：父目录（Workspace）C 路径固化 + 正常上下文预建目录树。
+        // install() 早于 Workspace.ensure()，不预建的话启动早期崩溃会因父目录不存在而丢日志。
+        let parent = Workspace.root.path
+        let pc = UnsafeMutablePointer<CChar>.allocate(capacity: crashDirCap)
+        if let u = (parent as NSString).utf8String { strcpy(pc, u) }
+        crashParentC = pc
+        try? FileManager.default.createDirectory(at: crashDir, withIntermediateDirectories: true)
         if sigPathBuf == nil { sigPathBuf = .allocate(capacity: sigPathCap) }
         if sigMsgBuf == nil { sigMsgBuf = .allocate(capacity: sigMsgCap) }
         if sigFramesBuf == nil {
             sigFramesBuf = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: sigFrameCap)
             sigFramesBuf?.initialize(repeating: nil, count: sigFrameCap)
+        }
+        // v6.6.9：预缓存版本号 + iSH 开关——handler 里绝不碰 Bundle/UserDefaults
+        if sigVersionBuf == nil {
+            let cap = sigVersionCap
+            let buf = UnsafeMutablePointer<CChar>.allocate(capacity: cap)
+            let v = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
+            var i = 0
+            for ch in v.utf8 where i < cap - 1 { buf[i] = CChar(bitPattern: ch); i += 1 }
+            buf[i] = 0
+            sigVersionBuf = buf
+        }
+        sigIshFlag = UserDefaults.standard.bool(forKey: "alpineEngineEnabled") ? 49 : 48
+        // v6.6.9：预填信号名表（7 槽 × 16 字节），handler 内纯算术索引
+        if sigNameTable == nil {
+            let tbl = UnsafeMutablePointer<CChar>.allocate(capacity: sigSlotCount * sigNameCap)
+            tbl.initialize(repeating: 0, count: sigSlotCount * sigNameCap)
+            let names = ["SIGILL", "SIGTRAP", "SIGABRT", "SIGFPE", "SIGBUS", "SIGSEGV", "SIG?"]
+            for (i, n) in names.enumerated() {
+                var j = 0
+                for ch in n.utf8 where j < sigNameCap - 1 {
+                    tbl[i * sigNameCap + j] = CChar(bitPattern: ch)
+                    j += 1
+                }
+                tbl[i * sigNameCap + j] = 0
+            }
+            sigNameTable = tbl
         }
 
         // 1) ObjC 未捕获异常（Swift fatalError / 强解包 / 数组越界等走这里）
@@ -124,6 +187,8 @@ enum CrashCatcher {
         let ts = time(nil)
         // v2.9.172：直接用启动时固化的 C 路径，零 Swift runtime 访问
         guard let d = crashDirC, let pb = sigPathBuf, let mb = sigMsgBuf else { return }
+        // v6.6.9：先建父目录（Workspace）再建 crash——修复启动早期崩溃丢日志
+        if let par = crashParentC { _ = mkdir(par, 0o755) }
         _ = mkdir(d, 0o755)
         // 路径: dir + "/sig_" + ts + ".txt"
         var p = pb
@@ -142,9 +207,11 @@ enum CrashCatcher {
         var m = mb
         strcpy(m, "signal ")
         m += 7
-        if let name = strsignal(s) {
-            strcpy(m, name)
-            m += strlen(m)
+        // v6.6.9：信号名查预填表（strsignal 非 signal-safe，崩溃现场可能二次崩溃）
+        if let tbl = sigNameTable {
+            let slotName = tbl + sigSlot(s) * sigNameCap
+            strcpy(m, slotName)
+            m += strlen(slotName)
         } else {
             m = appendInt(m, Int(s))
         }
@@ -161,14 +228,16 @@ enum CrashCatcher {
         m += 6
         m = appendHex(m, UInt(bitPattern: sigImageBase))
         // v6.6.0：写出构建版本与引擎开关状态（排障关键：区分构建代次 / 是否开了 iSH）
+        // v6.6.9：版本/开关均由 install() 预缓存，handler 内零 Swift 运行时访问
         strcpy(m, " ver=")
         m += 5
-        if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-            for ch in v.utf8 { m[0] = CChar(ch); m += 1 }
+        if let vb = sigVersionBuf {
+            strcpy(m, vb)
+            m += strlen(vb)
         }
         strcpy(m, " ish=")
         m += 5
-        m[0] = UserDefaults.standard.bool(forKey: "alpineEngineEnabled") ? 49 : 48  // '1'/'0'
+        m[0] = sigIshFlag
         m += 1
         strcpy(m, " ")
         m += 1
