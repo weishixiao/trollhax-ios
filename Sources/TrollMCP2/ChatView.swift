@@ -134,9 +134,10 @@ struct ChatView: View {
                 }
             }, alignment: .top)
             // v6.2.7：边缘侧滑开关会话抽屉（用户反馈"会话页侧滑无法打开添加新对话页"）。
-            // v6.6.8：加强——左侧 60% 屏幕都能触发（原 x<44 边缘太窄，用户要求"会话页侧滑打开抽屉"）；
-            // minimumDistance 24→12、阈值 60→40 更灵敏。抽屉开时左滑 → 关闭。
-            // 用 simultaneousGesture 不阻挡消息列表垂直滚动；水平主导判定防误触。
+            // v6.6.9：① 触发区放宽到左侧 60% 屏、阈值降到 40、minimumDistance 12；
+            //         ② 另加左侧 28pt 边缘拖拽带（highPriorityGesture）兜底——
+            //            ScrollView 的滚动手势会吃掉 simultaneousGesture 的 onEnded，
+            //            边缘带保证"从左边往右划"一定打开抽屉。
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12, coordinateSpace: .global)
                     .onEnded { value in
@@ -152,6 +153,24 @@ struct ChatView: View {
                         }
                     }
             )
+            // v6.6.9：左侧边缘 28pt 高优先级拖拽带（兜底，防 ScrollView 抢手势）
+            .overlay(alignment: .leading) {
+                Color.clear
+                    .frame(width: 28)
+                    .contentShape(Rectangle())
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 8, coordinateSpace: .global)
+                            .onEnded { value in
+                                let dx = value.translation.width
+                                let dy = value.translation.height
+                                guard dx > 30, abs(dx) > abs(dy) * 1.2 else { return }
+                                let ui = AppUIState.shared
+                                if !ui.drawerOpen {
+                                    withAnimation { ui.drawerOpen = true }
+                                }
+                            }
+                    )
+            }
         }
         .navigationViewStyle(.stack)
         // v2.9.31：授权弹窗已整体移除（工具搜索即自动授权，无弹窗）。
