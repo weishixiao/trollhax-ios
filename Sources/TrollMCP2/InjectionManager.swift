@@ -1866,16 +1866,16 @@ final class InjectionManager {
     /// v2.9.58：root 诊断——执行 /usr/bin/id 验证 persona spawn 后子进程真实 uid/gid
     /// 返回 "uid=0(root) gid=0(wheel) ..." 或错误信息
     func diagnoseRoot() -> [String: Any] {
-        // v2.9.64：不依赖 /usr/bin/id (部分 iOS 版本无此命令），改用 /bin/sh -c "id"，
-        // shell 内置总能执行；同时把 spawn 诊断前缀放进输出，避免空输出误判。
-        let shPath = "/bin/sh"
-        guard FileManager.default.fileExists(atPath: shPath) else {
-            return ["error": "/bin/sh not found", "exit_code": -1, "id_output": "(no shell)", "is_root": false]
-        }
-        var (code, output) = spawnRoot(shPath, args: ["sh", "-c", "id"])
-        if code == -1 || output.isEmpty {
-            usleep(100_000)
-            (code, output) = spawnRoot(shPath, args: ["sh", "-c", "id"])
+        // v6.6.14：**不再用 /bin/sh**（那是 Alpine guest 路径，iOS 主机不存在），
+        // 改用系统 /usr/bin/id；不存在则退回 App 自带 helper 探测。
+        let idPath = "/usr/bin/id"
+        var (code, output): (Int32, String)
+        if FileManager.default.fileExists(atPath: idPath) {
+            (code, output) = spawnRoot(idPath, args: [])
+        } else if let probe = binaryPath("ldid") ?? binaryPath("cp") {
+            (code, output) = spawnRoot(probe, args: ["--version"])
+        } else {
+            return ["error": "no usable probe binary", "exit_code": -1, "id_output": "(no probe)", "is_root": false]
         }
         return [
             "exit_code": Int(code),
@@ -2015,17 +2015,33 @@ final class InjectionManager {
             "details": binSetuid
         ]
 
-        // 5. 测试 persona spawn（spawnRoot 会失败，但能捕获真实 errno）
+        // 5. 提权派发测试
+        // v6.6.14：**不能用 /bin/sh** —— 那是 Alpine guest 内的路径，iOS 主机侧没有，
+        // 导致测试恒返回 ENOENT（用户实测 spawn_persona_test 报 /bin/sh not found，
+        // 完全无法反映真实提权状态）。改用 App 自带 helper（bundle 内一定存在）。
         var spawnTest: [String: Any] = [:]
-        let shPath = "/bin/sh"
-        if FileManager.default.fileExists(atPath: shPath) {
-            let r = spawnRootDetailed(shPath, args: ["-c", "id"], timeout: 10)
-            spawnTest["code"] = Int(r.code)
-            spawnTest["diag_prefix"] = r.diagPrefix
-            spawnTest["stdout"] = r.stdout
-            spawnTest["stderr"] = r.stderr
+        let probeBin = binaryPath("ldid") ?? binaryPath("cp") ?? mainBundleBin
+        if FileManager.default.fileExists(atPath: probeBin) {
+            spawnTest["probe_binary"] = probeBin
+            // ① persona 路径（越狱/rootHide 下预期 85）
+            let r1 = spawnRootDetailed(probeBin, args: ["--version"], timeout: 8)
+            spawnTest["code"] = Int(r1.code)
+            spawnTest["diag_prefix"] = r1.diagPrefix
+            spawnTest["stdout"] = r1.stdout
+            spawnTest["stderr"] = r1.stderr
+            // ② 非 persona 路径（越狱下的真实提权方式）
+            let r2 = spawnRootDetailed(probeBin, args: ["--version"], timeout: 8, usePersona: false)
+            spawnTest["no_persona_code"] = Int(r2.code)
+            spawnTest["no_persona_stdout"] = r2.stdout
+            // ③ 真实身份：能跑就说明 euid 是否 root
+            let idBin = "/usr/bin/id"
+            if FileManager.default.fileExists(atPath: idBin) {
+                let rid = spawnRootDetailed(idBin, args: [], timeout: 8, usePersona: false)
+                spawnTest["id_code"] = Int(rid.code)
+                spawnTest["id_output"] = rid.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         } else {
-            spawnTest["error"] = "/bin/sh not found"
+            spawnTest["error"] = "no probe binary in bundle"
         }
         result["spawn_persona_test"] = spawnTest
 
@@ -2102,6 +2118,13 @@ final class InjectionManager {
                 if severity == "ok" { severity = "high" }
                 diagnosis.append("[A2 HIGH] 主二进制缺 no-sandbox —— 越狱下写其他 App Bundle 需要它")
             }
+
+            // v6.6.14：关键澄清——不是所有注入都需要 root
+            // 目标 App 若由 TrollStore/越狱安装，bundle 属主常是 mobile(501)，
+            // TrollHax 同为 501 时可直接读写，走 runAsRoot 的 native fallback 即可成功。
+            diagnosis.append("[NOTES] 并非所有注入都需要 root：目标 App 的 bundle 属主若是 mobile(501)，")
+            diagnosis.append("    本机（同为 501）可直接写入，runAsRoot 会自动走 native fallback。")
+            diagnosis.append("    只有目标属主是 root 时，才必须先修复 setuid/属主。")
 
             if let code = spawnTest["code"] as? Int, code == 85 {
                 diagnosis.append("[C INFO] persona spawn 返回 85 是**预期行为**（越狱/rootHide 不加载 persona 链路），不代表故障")

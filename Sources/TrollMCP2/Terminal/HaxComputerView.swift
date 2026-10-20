@@ -16,6 +16,12 @@ struct HaxComputerView: View {
     @State private var showTerminal = false
     @State private var showPackages = false
     @State private var packagesText = ""
+    // v6.6.14：镜像源 / DNS（与 Rootfs 管理页共享逻辑）
+    @State private var apkMirror = "USTC"
+    @State private var pipMirror = "Alibaba"
+    @State private var npmMirror = "npmmirror"
+    @State private var dnsMode = "自动"
+    @State private var currentDNS = "—"
 
     private static var rootfsPath: String {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -141,6 +147,90 @@ struct HaxComputerView: View {
                 Text("文件")
             }
 
+            // MARK: 镜像源（v6.6.14：从 Rootfs 管理合并过来，两页能力对齐）
+            Section {
+                Menu {
+                    ForEach(["USTC", "Aliyun", "Tsinghua", "Official"], id: \.self) { m in
+                        Button(m) { applyMirror("apk", m) }
+                    }
+                } label: {
+                    HStack {
+                        Label("Alpine APK", systemImage: "shippingbox.fill").foregroundColor(.primary)
+                        Spacer()
+                        Text(apkMirror).foregroundColor(.secondary)
+                        Image(systemName: "chevron.right").font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+                Menu {
+                    ForEach(["Alibaba", "Tsinghua", "USTC", "Official"], id: \.self) { m in
+                        Button(m) { applyMirror("pip", m) }
+                    }
+                } label: {
+                    HStack {
+                        Label("Python pip", systemImage: "cube.fill").foregroundColor(.primary)
+                        Spacer()
+                        Text(pipMirror).foregroundColor(.secondary)
+                        Image(systemName: "chevron.right").font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+                Menu {
+                    ForEach(["npmmirror", "Official"], id: \.self) { m in
+                        Button(m) { applyMirror("npm", m) }
+                    }
+                } label: {
+                    HStack {
+                        Label("Node.js npm", systemImage: "shippingbox.circle.fill").foregroundColor(.primary)
+                        Spacer()
+                        Text(npmMirror).foregroundColor(.secondary)
+                        Image(systemName: "chevron.right").font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+            } header: {
+                Text("镜像源")
+            } footer: {
+                Text("写入 Alpine 的 /etc/apk/repositories、/etc/pip.conf、/root/.npmrc，立即生效。")
+                    .font(.caption2)
+            }
+
+            // MARK: 容器网络
+            Section {
+                Menu {
+                    Button("自动（223.5.5.5 / 119.29.29.29 / 8.8.8.8）") { applyDNS("自动") }
+                    Button("仅国内（223.5.5.5 / 119.29.29.29）") { applyDNS("国内") }
+                    Button("仅 Google（8.8.8.8 / 8.8.4.4）") { applyDNS("Google") }
+                } label: {
+                    HStack {
+                        Text("DNS 模式")
+                        Spacer()
+                        Text(dnsMode).foregroundColor(.secondary)
+                        Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+                HStack {
+                    Text("当前生效")
+                    Spacer()
+                    Text(currentDNS).font(.caption).foregroundColor(.secondary)
+                }
+            } header: {
+                Text("容器网络")
+            } footer: {
+                Text("写 Alpine 的 /etc/resolv.conf。用代理/VPN 时建议保持「自动」。")
+                    .font(.caption2)
+            }
+
+            // MARK: 性能（AOJIT 说明）
+            Section {
+                HStack {
+                    Label("AOJIT 编译加速", systemImage: "bolt.circle")
+                    Spacer()
+                    Text("不可用").foregroundColor(.secondary).font(.caption)
+                }
+                Text("OpenMinis 的 AOJIT 依赖 iSH 内核的预编译镜像子系统（镜像录制 + AOT 覆盖率），TrollHax 链接的 libish.a 未启用该特性。需要重编引擎才能支持。")
+                    .font(.caption2).foregroundColor(.secondary)
+            } header: {
+                Text("性能")
+            }
+
             // MARK: 危险操作
             Section {
                 Button(role: .destructive) {
@@ -201,6 +291,64 @@ struct HaxComputerView: View {
         rootfsInstalled = fm.fileExists(atPath: Self.dataPath)
         rootfsSize = Self.directorySize(Self.rootfsPath)
         engineEnabled = UserDefaults.standard.bool(forKey: "alpineEngineEnabled")
+        if rootfsInstalled && engineEnabled {
+            DispatchQueue.global(qos: .utility).async {
+                let dns = RootfsConfig.currentDNSSummary()
+                DispatchQueue.main.async { currentDNS = dns }
+            }
+        }
+    }
+
+    // MARK: - 镜像 / DNS（v6.6.14）
+
+    private func applyMirror(_ kind: String, _ name: String) {
+        guard RootfsConfig.installed || engineEnabled else {
+            toast = "请先开启引擎并安装 rootfs（打开一次终端）"
+            return
+        }
+        let cmd: String
+        switch kind {
+        case "apk": cmd = RootfsConfig.apkMirrorCommand(name)
+        case "pip": cmd = RootfsConfig.pipMirrorCommand(name)
+        default:    cmd = RootfsConfig.npmMirrorCommand(name)
+        }
+        toast = "正在切换…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = ISHEngine.exec(cmd, timeout: 40)
+            DispatchQueue.main.async {
+                if r.exitCode == 0 {
+                    switch kind {
+                    case "apk": apkMirror = name
+                    case "pip": pipMirror = name
+                    default:    npmMirror = name
+                    }
+                    toast = "已切换：\(name)"
+                } else {
+                    toast = "失败（退出码 \(r.exitCode)）：\(r.output.prefix(60))"
+                }
+            }
+        }
+    }
+
+    private func applyDNS(_ mode: String) {
+        guard RootfsConfig.installed || engineEnabled else {
+            toast = "请先开启引擎并安装 rootfs"
+            return
+        }
+        toast = "正在设置 DNS…"
+        let cmd = RootfsConfig.dnsCommand(mode)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = ISHEngine.exec(cmd, timeout: 30)
+            DispatchQueue.main.async {
+                if r.exitCode == 0 {
+                    dnsMode = mode
+                    currentDNS = RootfsConfig.currentDNSSummary()
+                    toast = "DNS 已切换：\(mode)"
+                } else {
+                    toast = "DNS 设置失败（退出码 \(r.exitCode)）"
+                }
+            }
+        }
     }
 
     private func performReset() {
