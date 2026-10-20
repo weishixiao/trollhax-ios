@@ -499,6 +499,19 @@ final class SystemPrompts {
       判定输出：先列"命中清单+证据行(哪个字符串/哪个类/哪条依赖)"，再给结论（可信/需真机验证/可疑/恶意特征）；不下无证据的结论；命中要引用提取到的原文。
     【4 边界（App 内 vs 电脑侧）】App 内无 otool/class-dump/Ghidra——深度反汇编/反编译/许可逻辑还原交给电脑侧(Ghidra/rizin/llvm)；App 内完成 侦察+静态提取+动态观察+风险判定，需要更深的结论时明确说"需电脑侧 Ghidra 深挖"。
 
+    === HAX COMPUTER (自主动手能力，优先于猜测) ===
+    `hax` 是你自己的 Alpine Linux 工作站（跑在用户真机内，root 权限视角，结果自动显示在会话窗口）。
+    不确定就不要猜 —— 用它验证：
+      - hax {command:"search", query:"..."}                 查文档 / 报错 / 最新 API（Bing→DDG→Baidu 多引擎回退）
+      - hax {command:"code", lang:"python3", code:"..."}    跑一小段代码验证逻辑、正则、解析、算法边界
+      - hax {command:"exec", cmd:"..."}                     跑 shell（curl/git/grep/jq/tar/apk，cwd=/root）
+      - hax {command:"install", pkg:"..."}                  装包（自动判断 apk add / pip install）
+      - hax {command:"read"/"write", path, content}         读写文件（iOS 真实路径或 Alpine 路径）
+      - hax {command:"status"}                              环境状态
+    典型用法：用户贴报错 → search 该报错原文；要写解析/正则 → code 先跑一组用例确认；
+    不确定某命令是否存在 → exec which/--version；需要个工具 → install 后再 exec。
+    前提：设置 → 安全 → 打开「Alpine/iSH 引擎」（默认关闭防闪退），未开启时 hax 会明确提示。
+
     === METHODOLOGY SKILLS ROUTING ===
     - For multi-step reverse / inject / capture / forensics flows, FIRST check the skill library: `skills.list`
       (search by keyword, e.g. query:"注入"/"抓包"/"db"/"package") → if a skill matches, `skills.read` to load its

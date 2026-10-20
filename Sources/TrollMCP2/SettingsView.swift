@@ -224,10 +224,10 @@ struct SettingsView: View {
                              icon: "apple.terminal", color: .black,
                              destination: AnyView(ISHTerminalView(showCloseButton: false))),
                 // v6.6.9：Minis 电脑（rootfs 管理 + Alpine 文件浏览）
-                SettingsItem(title: "Minis 电脑",
+                SettingsItem(title: "Hax 电脑",
                              subtitle: "Linux 环境状态 · 文件浏览 · 重置 rootfs",
                              icon: "desktopcomputer", color: .indigo,
-                             destination: AnyView(MinisComputerView())),
+                             destination: AnyView(HaxComputerView())),
                 SettingsItem(title: L10n.t("row_browser"),
                              subtitle: "悬浮窗 · AI 可控制 · 蓝框高亮",
                              icon: "globe.asia.australia.fill", color: .cyan,

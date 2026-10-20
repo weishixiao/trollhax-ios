@@ -22,6 +22,9 @@ struct ChatView: View {
     // UIKit 方案真机稳定。标记位 + sheet onDismiss 触发，保证面板完全关闭后再 present（不再猜时间延迟）。
     @State private var pendingFilePick = false
     @State private var showModelPicker = false  // v2.9.36：聊天框切换上游模型
+    // v6.6.11：右上角 + 号菜单入口
+    @State private var showTerminal = false
+    @State private var showHaxComputer = false
     // v3.3.4：输入框 + 号展开"应用/相册/文件/浏览器"快捷行（点 + 变 x 收起）
     @State private var attachExpanded = false
 
@@ -57,11 +60,30 @@ struct ChatView: View {
             .toolbar {
                 // v3.4.3：标题 + 模型名（🟢 deepseek v4 ▽）与右侧图标放同一平行线（导航栏 principal）
                 ToolbarItem(placement: .principal) {
-                    // v6.4.9：任务名居中；模型快速切换移到最右侧（见 navigationBarTrailing）
-                    Text(selectionMode ? "已选 \(selectedIds.count) 条" : store.currentTitle)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
+                    // v6.6.11：模型快速切换从右上角移到任务名下方（用户要求）
+                    VStack(spacing: 1) {
+                        Text(selectionMode ? "已选 \(selectedIds.count) 条" : store.currentTitle)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .lineLimit(1)
+                        if !selectionMode {
+                            Button(action: { showModelPicker = true }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "circle.fill")
+                                        .font(.system(size: 5))
+                                        .foregroundColor(.green)
+                                    Text(modelStore.defaultConfig?.name ?? "未选择模型")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 8, weight: .semibold))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
                 }
                 ToolbarItem(placement: .navigationBarLeading) {
                     if selectionMode {
@@ -89,25 +111,22 @@ struct ChatView: View {
                                 .disabled(selectedIds.isEmpty)
                         }
                     } else {
-                        // v6.2.7：删除右上角喇叭(TTS 开关)与确认勾选(选择模式)按钮
-                        // v6.4.9：按用户要求——模型快速切换键移到最右侧（任务名保持居中）
-    // v6.3.1：按用户要求改为"选择模型"面板（对齐其截图样式）——点模型名弹出
-                            // 可搜索面板：已保存配置 + 上游 /models 列表直接展示，点选即切换
-                            Button(action: { showModelPicker = true }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "circle.fill")
-                                        .font(.system(size: 7))
-                                        .foregroundColor(.green)
-                                    Text(modelStore.defaultConfig?.name ?? "未选择模型")
-                                        .font(.caption2)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.secondary)
-                                    Image(systemName: "chevron.down")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundColor(.secondary)
-                                }
+                        // v6.6.11：模型切换已移到任务名下方；右上角改为 + 号（终端 / Hax 电脑入口）
+                        Menu {
+                            Button {
+                                showTerminal = true
+                            } label: {
+                                Label("终端（自动进入 /root）", systemImage: "apple.terminal")
                             }
-                            .buttonStyle(PlainButtonStyle())
+                            Button {
+                                showHaxComputer = true
+                            } label: {
+                                Label("Hax 电脑", systemImage: "desktopcomputer")
+                            }
+                        } label: {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 18, weight: .semibold))
+                        }
                     }
                 }
             }
@@ -173,6 +192,13 @@ struct ChatView: View {
             }
         }
         .navigationViewStyle(.stack)
+        // v6.6.11：右上角 + 号 → 终端 / Hax 电脑
+        .sheet(isPresented: $showTerminal) {
+            CompatNav { ISHTerminalView(showCloseButton: true, autoCdRoot: true) }
+        }
+        .sheet(isPresented: $showHaxComputer) {
+            CompatNav { HaxComputerView() }
+        }
         // v2.9.31：授权弹窗已整体移除（工具搜索即自动授权，无弹窗）。
         .sheet(item: $attachmentSheet, onDismiss: {
             // v3.1.67：面板完全关闭后再触发文件选择（UIKit 从顶层 VC present，真机稳定）
