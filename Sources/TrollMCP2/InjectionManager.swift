@@ -294,6 +294,13 @@ final class InjectionManager {
             let retry = spawnRootDetailed(bin, args: args, timeout: timeout)
             if retry.code == 0 { return (0, retry.output) }
         }
+        // v6.6.13：**最后兜底**——提权全线失败时，直接试 FileManager 原生写。
+        // 目标 App 若由 TrollStore/越狱安装，bundle 属主常是 mobile(501)，
+        // 此时 TrollHax（同样 EUID=501）根本不需要 root 就能读写/删除。
+        // 之前只有在 geteuid()==0 时才走 nativeFileOp，白白浪费了这条可用路径。
+        if result.code != 0, let native = nativeFileOp(name, args) {
+            return (native.0, native.1.isEmpty ? "[native fallback OK，无需 root]" : native.1)
+        }
         return (result.code, result.output)
     }
 
@@ -1914,6 +1921,11 @@ final class InjectionManager {
         result["jailbreak_env"] = JBEnvironment.kind.rawValue
         result["jailbreak_root"] = JBEnvironment.rootPrefix.isEmpty ? "(none)" : JBEnvironment.rootPrefix
         result["jailbreak_root_launcher"] = JBEnvironment.rootLaunchPath() ?? "(none)"
+        if JBEnvironment.isJailbroken {
+            result["jailbreak_toolchain"] = JBEnvironment.toolchainSnapshot()
+            let binDir = mainBundlePath + "/bin"
+            result["helper_owner"] = JBEnvironment.helperOwnerReport(binDir)
+        }
 
         // 2. 主二进制路径 & 文件权限
         let mainBundlePath = Bundle.main.bundlePath
@@ -2062,6 +2074,15 @@ final class InjectionManager {
             if setuidCount == 0 {
                 severity = "critical"
                 diagnosis.append("[B CRITICAL] 全部 \(totalCount) 个 helper 缺 setuid 位——越狱下这是唯一的提权手段")
+                // v6.6.13：setuid 只对 root 属主生效，先看属主
+                let ownerInfo = JBEnvironment.helperOwnerReport(mainBundlePath + "/bin")
+                if let rootOwned = ownerInfo["root_owned"] as? Int, rootOwned == 0 {
+                    diagnosis.append("    → 且 helper 属主不是 root（root_owned=0）——**即使 chmod u+s 也不会提权**")
+                    if let samples = ownerInfo["samples"] as? [String], !samples.isEmpty {
+                        diagnosis.append("    → 实际属主样例：\(samples.joined(separator: "、"))")
+                    }
+                    diagnosis.append("    → 所以 chown root:wheel 是必须的第一步，不能只做 chmod")
+                }
                 diagnosis.append("    → 在越狱终端（NewTerm / Filza 以 root）执行以下命令，然后回 App 重试：")
                 for line in JBEnvironment.privilegeFixCommand(appPath: mainBundlePath).split(separator: "\n") {
                     diagnosis.append("      " + String(line))
