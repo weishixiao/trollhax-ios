@@ -77,10 +77,11 @@ final class IPAInspectTool: MCPTool {
         let binaryPath = bundlePath.appending("/\(executable)")
 
         // v2.9.116：arch 改用 MachOAnalyzer 解析 (旧版依赖 /usr/bin/file，iOS 上不存在 → 永远 unknown 误判不可注入）
-        let ldidPath = InjectionManager.shared.binaryPath("ldid") ?? ""
-        if !ldidPath.isEmpty, FileManager.default.fileExists(atPath: binaryPath) {
-            let (_, entOutput) = InjectionManager.shared.spawnRoot(ldidPath, args: ["-e", binaryPath])
-            let macho = MachOAnalyzer.analyze(binaryPath)
+        // v6.9.5：entitlements 走静态解析（不 spawn ldid，rootHide 下 ldid 恒 85）
+        let staticEnts = AppEntitlementsTool.entitlementsViaMachO(path: binaryPath)
+        let entOutput = AppEntitlementsTool.entitlementsJSON((staticEnts?["entitlements"] as? [String: Any]) ?? [:], limit: 3000)
+        let macho = MachOAnalyzer.analyze(binaryPath)
+        if FileManager.default.fileExists(atPath: binaryPath), (staticEnts != nil || macho != nil) {
 
             result["binary"] = [
                 "path": binaryPath,
@@ -170,11 +171,15 @@ final class DylibInspectTool: MCPTool {
         result["arch"] = fileOutput.contains("arm64") ? "arm64" : (fileOutput.contains("armv7") ? "armv7" : "unknown")
 
         // 签名
-        let ldidPath = InjectionManager.shared.binaryPath("ldid") ?? ""
-        if !ldidPath.isEmpty {
-            let (_, entOutput) = InjectionManager.shared.spawnRoot(ldidPath, args: ["-e", path])
-            result["signed"] = !entOutput.isEmpty
-            result["entitlements"] = String(entOutput.prefix(1000))
+        // v6.9.5：静态解析，不 spawn ldid
+        if AppEntitlementsTool.entitlementsViaMachO(path: path) != nil {
+            let entDict = AppEntitlementsTool.entitlementsDict(path: path)
+            result["signed"] = true
+            result["entitlements_count"] = entDict.count
+            result["entitlements"] = AppEntitlementsTool.entitlementsJSON(entDict, limit: 1000)
+            result["entitlements_source"] = "machokit"
+        } else {
+            result["signed"] = false
         }
 
         // 依赖

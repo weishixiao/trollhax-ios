@@ -92,6 +92,13 @@ enum ToolParamHelp {
     /// （不同错误的失败需要不同处理，不该被同一熔断逻辑拦截）
     static func errorSignature(_ message: String) -> String {
         let m = message.lowercased()
+        // v6.9.5：ENOSYS 必须先判定——85/78 是"内核不支持该 syscall"（rootless/rootHide 下
+        // persona spawn 的典型返回值），不是权限不足。放到 permission 后面会被
+        // "ldid -e failed (85)" 这类文本误判成 permission，把 AI 引去查 entitlements。
+        if m.contains("enosys") || m.contains("(85)") || m.contains("(78)")
+            || m.contains("function not implemented") || m.contains("不支持该 syscall") {
+            return "unsupported_env"
+        }
         if m.contains("required") || m.contains("invalid params") { return "missing_param" }
         if m.contains("not found") || m.contains("不存在") { return "not_found" }
         if m.contains("denied") || m.contains("permission") || m.contains("未授权") { return "permission" }

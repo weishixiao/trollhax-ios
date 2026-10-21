@@ -1,4 +1,5 @@
 import Foundation
+// v6.9.5：app.entitlements 走静态 Mach-O 解析（MachoTools 后端），不 spawn ldid
 
 import UIKit
 import Security
@@ -1325,28 +1326,45 @@ final class AppEntitlementsTool: MCPTool {
             return ["error": "app not found: \(bundleId)"]
         }
         let main = InjectionManager.shared.executablePath(app)
-        // v2.9.116：先查加密——加密二进制 ldid 解不出 entitlements，不能当"没有"
+        // v2.9.116：先查加密——加密二进制解不出 entitlements，不能当"没有"
         var cryptID: UInt32 = 0
         if let mo = MachOAnalyzer.analyze(main) { cryptID = mo.cryptID }
-        let (c, o) = InjectionManager.shared.runAsRoot("ldid", args: ["-e", main])
-        if c != 0 {
-            var out: [String: Any] = ["error": "ldid -e failed (\(c))", "output": String(o.prefix(500)), "bundle_id": bundleId]
-            out["parse_error"] = cryptID > 0 ? "target App is encrypted (cryptid=\(cryptID))，entitlements 被加密掩盖，非“没有权限”" : "Mach-O 解析failed (可能混淆/特殊头)，非“没有权限”"
-            out["next_step"] = cryptID > 0 ? "先executed app.decrypt 砸壳后重试" : "用 shell.exec 查看主二进制头部确认格式"
-            return out
-        }
+
+        // v6.9.5：静态解析为主路径。
+        // entitlements 就在二进制 LC_CODE_SIGNATURE 里，根本不需要提权也不需要 ldid 进程。
+        // 旧实现无条件先跑 ldid -e（runAsRoot），在 rootless/rootHide 环境下 syscall 被拦，
+        // 每次 4ms 返回 85 (ENOSYS) —— 既慢又刷满审计日志，且一旦连续失败还会触发
+        // 调用循环熔断（"已连续 N 次用相同参数调用"）。
         var dict: [String: Any] = [:]
+        var source = "machokit"
         var parseError = ""
-        // v3.0.42：用原始字节解析 (系统 App entitlements 是二进制 plist，UTF-8 转 String 会损坏）
-        let (rc, raw) = InjectionManager.shared.runAsRootData("ldid", args: ["-e", main])
-        if rc == 0,
-           let d = try? PropertyListSerialization.propertyList(from: raw, options: [], format: nil) as? [String: Any] {
-            dict = d
+        var ldidDiag: [String: Any]? = nil
+
+        if let staticEnts = Self.entitlementsViaMachO(path: main) {
+            let inner = staticEnts["entitlements"] as? [String: Any] ?? [:]
+            dict = inner
+            if inner.isEmpty, let d = staticEnts["diagnosis"] { parseError = (d as? [String])?.first ?? "" }
         } else {
-            parseError = cryptID > 0 ? "加密 App (cryptid=\(cryptID))entitlements 无法解析，先砸壳" : "ldid 输出非 plist，解析failed"
+            // 静态解析失败（非 Mach-O / 截断文件）→ 才回退 ldid
+            source = "ldid"
+            let (rc, raw) = InjectionManager.shared.runAsRootData("ldid", args: ["-e", main])
+            if rc == 0,
+               let d = try? PropertyListSerialization.propertyList(from: raw, options: [], format: nil) as? [String: Any] {
+                dict = d
+            } else {
+                parseError = Self.describeLdidFailure(rc, cryptID: cryptID)
+                ldidDiag = [
+                    "exit_code": Int(rc),
+                    "errno_name": Self.errnoName(rc),
+                    "classified": Self.classifyLdidErrno(rc),
+                ]
+            }
         }
+
         var out: [String: Any] = [
             "bundle_id": bundleId,
+            "binary": main,
+            "source": source,
             "entitlements": dict,
             "keychain_groups": dict["keychain-access-groups"] ?? [],
             "platform_app": dict["platform-application"] as? Bool ?? false,
@@ -1354,9 +1372,91 @@ final class AppEntitlementsTool: MCPTool {
             "task_for_pid": dict["task_for_pid-allow"] as? Bool ?? false,
             "get_task_allow": dict["get-task-allow"] as? Bool ?? false,
             "parse_error": parseError,
-            "hint": parseError.isEmpty ? "keychain_groups can be passed to device.keychain_wipe to precisely clear the target App keychain" : parseError + " (empty value does not mean no permission)"
+            "hint": parseError.isEmpty
+                ? "keychain_groups can be passed to device.keychain_wipe to precisely clear the target App keychain"
+                : parseError + " (empty value does not mean no permission)"
         ]
+        if let d = ldidDiag { out["ldid"] = d }
         return out
+    }
+
+    // MARK: - 静态解析（MachOKit）
+
+    /// 直接读二进制 LC_CODE_SIGNATURE 里的 entitlements blob，不 spawn 任何进程。
+    /// 返回 nil 表示"这不是一个能解析的 Mach-O"（此时才值得退回 ldid）。
+    static func entitlementsViaMachO(path: String) -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        // 复用 macho 工具的加载器：已处理 thin/fat、.app 目录、错误文案
+        guard let file = try? MachoExecTool.openMachO(path: path) else { return nil }
+        return Self.extractEntitlements(file)
+    }
+
+    /// 只取 entitlements 字典（没有则空字典）——调用方不需要关心中间 dict 结构。
+    static func entitlementsDict(path: String) -> [String: Any] {
+        guard let r = entitlementsViaMachO(path: path) else { return [:] }
+        return r["entitlements"] as? [String: Any] ?? [:]
+    }
+
+    /// 把 entitlements 字典渲染成可读 JSON（空字典返回空串）。
+    static func entitlementsJSON(_ dict: [String: Any], limit: Int) -> String {
+        guard !dict.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else { return "" }
+        return String(str.prefix(limit))
+    }
+
+    private static func extractEntitlements(_ file: MachOFile) -> [String: Any] {
+        guard let cs = file.codeSign else {
+            return [
+                "entitlements": [:] as [String: Any],
+                "diagnosis": ["[缺失] 二进制没有 LC_CODE_SIGNATURE（未签名或签名被剥离），不是“没有权限”"],
+            ]
+        }
+        let ents = cs.embeddedEntitlements ?? [:]
+        var out: [String: Any] = ["entitlements": ents, "count": ents.count]
+        if ents.isEmpty {
+            out["diagnosis"] = ["[空] 有签名但没有 entitlements blob（ad-hoc 签名或权限被剥离），不是“没有权限”"]
+        }
+        return out
+    }
+
+    // MARK: - ldid 兜底错误归因
+
+    /// 把 runAsRoot 的退出码翻译成人话。iOS 上 spawn 失败常见 return = 128+signal
+    /// 或直接透传 errno（85=ENOSYS 是 rootLESS/rootHide 环境的典型值）。
+    static func errnoName(_ code: Int32) -> String {
+        switch code {
+        case 1: return "EPERM"
+        case 2: return "ENOENT"
+        case 13: return "EACCES"
+        case 22: return "EINVAL"
+        case 78: return "ENOSYS"
+        case 85: return "ENOSYS"
+        case 126: return "ENOEXEC"
+        case 127: return "ENOENT(找不到 ldid 可执行文件)"
+        default: return ""
+        }
+    }
+
+    static func classifyLdidErrno(_ code: Int32) -> String {
+        switch code {
+        case 85, 78: return "环境不支持：persona/root spawn 被内核拒绝（rootless/rootHide）。读 entitlements 不需要提权，应走静态解析"
+        case 127, 2: return "ldid 二进制不存在或路径错误（检查 Resources/bin/ldid 是否随包分发）"
+        case 126: return "ldid 不是可执行文件或架构不匹配（arm64 vs arm64e）"
+        case 1, 13: return "权限不足：ldid 需要 root，当前 App 无 platform-application/no-sandbox"
+        default: return "未归类，需查看 ldid 原始 stderr"
+        }
+    }
+
+    static func describeLdidFailure(_ rc: Int32, cryptID: UInt32) -> String {
+        if cryptID > 0 {
+            return "加密 App (cryptid=\(cryptID))，entitlements 需先砸壳（app.decrypt）"
+        }
+        let name = errnoName(rc)
+        if !name.isEmpty {
+            return "ldid -e failed (\(rc) \(name))：\(classifyLdidErrno(rc))"
+        }
+        return "ldid 输出非 plist，解析失败 (exit=\(rc))"
     }
 }
 
@@ -1375,15 +1475,15 @@ final class KeychainWipeTool: MCPTool {
             return ["error": "app not found: \(bundleId)"]
         }
         let main = InjectionManager.shared.executablePath(app)
-        let (c, o) = InjectionManager.shared.runAsRoot("ldid", args: ["-e", main])
+        // v6.9.5：与 app.entitlements 同源——直接读签名 blob，不再 spawn ldid
+        // （rootHide 环境下 ldid 恒返回 85，旧实现会静默退回默认组，删不到目标 App 条目）
         var groups: [String] = []
-        if c == 0, let data = o.data(using: .utf8),
-           let d = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
-           let gs = d["keychain-access-groups"] as? [String] {
+        var entSource = "machokit"
+        if let staticEnts = AppEntitlementsTool.entitlementsViaMachO(path: main),
+           let gs = (staticEnts["entitlements"] as? [String: Any])?["keychain-access-groups"] as? [String] {
             groups = gs
-        }
-        // v3.0.42：ldid 可能输出二进制 plist——用原始字节重试
-        if groups.isEmpty {
+        } else {
+            entSource = "ldid"
             let (rc2, raw2) = InjectionManager.shared.runAsRootData("ldid", args: ["-e", main])
             if rc2 == 0,
                let d2 = try? PropertyListSerialization.propertyList(from: raw2, options: [], format: nil) as? [String: Any],
@@ -1405,6 +1505,7 @@ final class KeychainWipeTool: MCPTool {
             return [
                 "bundle_id": bundleId,
                 "method": "sqlite_wipe(root keychain-2.db)",
+                "entitlements_source": entSource,
                 "groups_tried": groups,
                 "deleted_count": wiped,
                 "output": rout.trimmingCharacters(in: .whitespacesAndNewlines),

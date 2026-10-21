@@ -309,6 +309,9 @@ public final class ToolRegistry: ObservableObject {
         case "permission", "encrypted":
             lines.append("① 权限类失败重试无意义。先跑诊断确认环境（如 inject command:diagnose / app command:diff）。")
             lines.append("② 加密 App 先砸壳: app command:decrypt → app command:replace_decrypted → 再操作。")
+        case "unsupported_env":
+            lines.append("① 这是当前环境不支持该 syscall（rootless/rootHide 下常见的 85 ENOSYS），重试无意义。")
+            lines.append("② 换一条不需要提权/子进程路径：读二进制信息用 macho，读权限用 app command:entitlements。")
         case "network":
             lines.append("① 网络类失败稍后重试或换 endpoint，不要连续撞同一个地址。")
         default:
