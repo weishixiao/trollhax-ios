@@ -559,7 +559,7 @@ final class AppExecTool: MCPTool {
             "duration": "Duration seconds (for stats)",
             "text": "Text to input (for open_and_input)"
         ],
-        verified: true, category: "app_control", prerequisites: ["analyze/hook 加密 App(cryptid=1)必须先砸壳: decrypt → replace_decrypted → restore_binary 恢复(流程见 summary)", "install/uninstall 需 TrollStore entitlements; 失败看 diagnose"]
+        verified: true, category: "app_control", prerequisites: ["analyze/hook 加密 App(cryptid=1)必须先砸壳: decrypt → replace_decrypted → restore_binary 恢复(流程见 summary)", "install/uninstall 需 TrollStore entitlements; 失败看 diagnose"],
         // v6.9.2：结构化参数——app 有 20 个子命令，参数混用最严重（bundle_id / path / ipa_path）
         paramSpecs: [
             .e("command", "子命令（必填）",
