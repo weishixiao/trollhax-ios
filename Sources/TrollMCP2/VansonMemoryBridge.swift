@@ -148,7 +148,7 @@ final class VansonMemoryBridge {
         }
         mach_port_deallocate(mach_task_self_, task)
 
-        guard eng.attachToPid(pid) else {
+        guard eng.attach(toPid: pid) else {
             throw VansonEngineError.attachDenied(pid, Int32(kr))
         }
         attachedPid = pid
@@ -388,7 +388,7 @@ final class VansonMemoryBridge {
         try requireAttached()
         let eng = engine
         if type == .string {
-            return eng.readString(at: address, encoding: .utf8, maxBytes: UInt(max(1, length))) ?? ""
+            return eng.readString(atAddress: address, encoding: VMStringEncodingUTF8, maxBytes: UInt(max(1, length))) ?? ""
         }
         return eng.readAddress(address, type: type.raw) ?? ""
     }
@@ -399,7 +399,7 @@ final class VansonMemoryBridge {
         try requireAttached()
         let eng = engine
         if type == .string {
-            return eng.writeString(at: address, value: value, encoding: .utf8)
+            return eng.writeString(atAddress: address, value: value, encoding: VMStringEncodingUTF8)
         }
         return eng.writeAddress(address, value: value, type: type.raw)
     }
@@ -426,7 +426,7 @@ final class VansonMemoryBridge {
             // ObjC `dataFromHexString:` → Swift `data(fromHexString:)`（末尾 String 触发 id 前缀剥离）
             throw VansonEngineError.invalidValue("hex 必须是偶数长度的十六进制字符串")
         }
-        return engine.writeRaw(data, toAddress: address)
+        return engine.writeRawData(data, toAddress: address)
     }
 
     // MARK: - 会话

@@ -11,7 +11,8 @@
 // 进程内存在 memory 工具（VansonMod 引擎）；运行时 hook 后续单独做。
 
 import Foundation
-import MachOKit
+// data(in:) 等节内容读取 API 标注为 @_spi(Support)，必须显式导入
+@_spi(Support) import MachOKit
 
 /// Mach-O 分析工具
 final class MachoExecTool: MCPTool {
@@ -134,7 +135,8 @@ final class MachoExecTool: MCPTool {
     /// 从 pid 反查可执行路径（proc_pidpath）
     static func executablePath(forPid pid: Int32) -> String? {
         var buf = [CChar](repeating: 0, count: 4096)
-        let n = proc_pidpath(pid, &buf, UInt32(buf.count))
+        // sys_proc_pidpath 由 ProcessTools.swift 用 @_silgen_name 声明（libproc）
+        let n = sys_proc_pidpath(pid, &buf, UInt32(buf.count))
         guard n > 0 else { return nil }
         return String(cString: buf)
     }
@@ -175,7 +177,7 @@ final class MachoExecTool: MCPTool {
                 cryptId = c.cryptId
             case let .loadDylib(c), let .loadWeakDylib(c), let .reexportDylib(c),
                  let .lazyLoadDylib(c), let .loadUpwardDylib(c):
-                if let name = c.dylib(in: file)?.name { dylibs.append(name) }
+                dylibs.append(c.dylib(in: file).name)
             default:
                 break
             }
@@ -255,7 +257,7 @@ final class MachoExecTool: MCPTool {
             out["flags"] = cd.layout.flags
             out["code_limit"] = cd.layout.codeLimit
             // identifier 是 CDHash 输入的一部分，ldid/codesign 报错时常用它对照
-            out["identifier"] = cd.identifier(in: file)
+            out["identifier"] = cd.identifier(in: cs)
             out["is_supports_team_id"] = cd.isSupportsTeamID
             out["is_supports_runtime"] = cd.isSupportsRuntime
         }
