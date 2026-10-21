@@ -232,7 +232,14 @@ public final class ToolRegistry: ObservableObject {
     // 不硬拦截，AI 有全局视角，自己决定要不要继续
     private var recentCalls: [String: [Date]] = [:]
     private let loopWindow: TimeInterval = 60.0  // 1 分钟窗口
-    private let loopThreshold = 3  // 调 3 次以上就提示
+    // v6.9.0：阈值 3 → 2。同一参数连续失败 2 次就熔断并给替代方案——
+    // 实测 AI 在第 3 次被拦时已经浪费两次往返，且往往还没意识到自己能换工具。
+    private let loopThreshold = 2
+
+    // v6.9.0：失败指纹跟踪——只有「同参数 + 同错误」才算循环。
+    // 同参数但错误变化（如先 missing_param 后 permission）说明在推进，不该熔断。
+    // key = callKey；value = (错误签名, 连续次数)
+    private var failureStreak: [String: (signature: String, count: Int)] = [:]
 
     // v3.0.90：工具结果缓存——5 分钟内同样的调用直接返回缓存，省时间
     private var resultCache: [String: (result: [String: Any], time: Date)] = [:]
@@ -253,6 +260,72 @@ public final class ToolRegistry: ObservableObject {
         "artifact.list", "macro.list",  // 列表类
         "skill.list", "skill.read",  // 技能列表
     ]
+
+    /// v6.9.0：熔断报错——不只说「停」，还给出可执行的替代方案。
+    ///
+    /// 旧文案只喊 STOP，模型常常理解成「再试一次别的参数」，于是换个无关参数继续撞。
+    /// 新文案明确列出：失败了几次、错误是什么、你传了什么、以及这批工具的替代选择。
+    private func loopBlockedError(tool: String,
+                                  params: [String: Any],
+                                  errorMessage: String,
+                                  count: Int) -> MCPError {
+        let keys = params.keys.filter { !$0.hasPrefix("_") }.sorted()
+        let passed = keys.isEmpty ? "(无)" : keys.joined(separator: ", ")
+        let signature = ToolParamHelp.errorSignature(errorMessage)
+
+        var lines: [String] = []
+        lines.append("🚫 已连续 \(count) 次用相同参数调用 \(tool)，错误都是同一类（\(signature)）。已停止本次调用。")
+        lines.append("你传的参数: [\(passed)]")
+        lines.append("错误原文: \(errorMessage.prefix(300))")
+        lines.append("")
+        lines.append("不要再用相同参数重试。请按下面选择一条路：")
+
+        // 根据错误类型给针对性替代方案
+        switch signature {
+        case "missing_param":
+            if keys.contains("path") && keys.contains("command") {
+                lines.append("① 你很可能把 path 传给了只认 bundle_id 的子命令。改用:")
+                for alt in ToolParamHelp.binaryCheckAlternatives() { lines.append("   - \(alt)") }
+                lines.append("② 或者补上 bundle_id 后重试: \(tool) command:<子命令> bundle_id:<包名>")
+                lines.append("   拿包名: \(ToolParamHelp.howToGetBundleId)")
+            } else {
+                lines.append("① 缺参数。按工具 description 的 parameters 列表补齐必填项后重试一次。")
+                lines.append("② 如果拿不到这个参数所代表的东西，换一个能直接拿结果的工具。")
+            }
+        case "not_found":
+            lines.append("① 确认路径/包名是否真实存在（先列出目录或列出已装 App）。")
+            lines.append("② 名称含空格/中文时改用绝对路径直传。")
+        case "permission", "encrypted":
+            lines.append("① 权限类失败重试无意义。先跑诊断确认环境（如 inject command:diagnose / app command:diff）。")
+            lines.append("② 加密 App 先砸壳: app command:decrypt → app command:replace_decrypted → 再操作。")
+        case "network":
+            lines.append("① 网络类失败稍后重试或换 endpoint，不要连续撞同一个地址。")
+        default:
+            lines.append("① 换一种工具或换一组参数。")
+            lines.append("② 如果确实需要这个结果，把错误原文告诉用户，让他决定下一步。")
+        }
+        lines.append("")
+        lines.append("如果以上都不适用，直接问用户，不要继续尝试。")
+
+        return MCPError.failed(lines.joined(separator: "\n"))
+    }
+
+    /// v6.9.0：记录失败并返回是否应该熔断。
+    /// 只有「同一 callKey + 同一错误签名」连续累计才计数；错误变了说明在推进，重置。
+    private func noteFailure(callKey: String, errorMessage: String) -> (count: Int, blocked: Bool) {
+        let sig = ToolParamHelp.errorSignature(errorMessage)
+        if let prev = failureStreak[callKey], prev.signature == sig {
+            let next = prev.count + 1
+            failureStreak[callKey] = (sig, next)
+            return (next, next >= loopThreshold)
+        }
+        failureStreak[callKey] = (sig, 1)
+        return (1, false)
+    }
+
+    private func clearFailure(callKey: String) {
+        failureStreak.removeValue(forKey: callKey)
+    }
 
     private func callKey(name: String, params: [String: Any]) -> String {
         let sortedParams = params.sorted { $0.key < $1.key }
@@ -754,6 +827,8 @@ public final class ToolRegistry: ObservableObject {
             do {
                 // v3.0.90：记录调用次数，告诉 AI 它调了几次，让 AI 自己判断
                 let callCount = recordCall(name: originalName, params: params)
+                // v6.9.0：失败指纹用的 callKey（同参数同错误才计熔断次数）
+                let ck = callKey(name: originalName, params: params)
                 // v2.9.72：工作流可视化
                 WorkflowManager.shared.addStep(name: originalName, tool: originalName)
 
@@ -839,8 +914,10 @@ public final class ToolRegistry: ObservableObject {
                                                     elapsedMs: elapsedMs, dataBytes: 0, permission: perm,
                                                     detail: errMsg, code: info.code, reason: info.reason, nextStep: info.nextStep)
                             WorkflowManager.shared.updateStep(tool: originalName, detail: errMsg, success: false)
-                            if callCount >= loopThreshold {
-                                throw MCPError.failed("🚫 LOOP BLOCKED: You've called this tool \(callCount) times with same params and it keeps failing with the same error. STOP. Do NOT call it again. Try a completely different approach, or ask the user what to do. Error: \(errMsg)")
+                            let streak = noteFailure(callKey: ck, errorMessage: errMsg)
+                            if streak.blocked {
+                                throw loopBlockedError(tool: originalName, params: params,
+                                                       errorMessage: errMsg, count: streak.count)
                             }
                             throw MCPError.classified(errMsg, code: info.code, reason: info.reason, nextStep: info.nextStep)
                         }
@@ -861,9 +938,11 @@ public final class ToolRegistry: ObservableObject {
                                                 elapsedMs: elapsedMs, dataBytes: 0, permission: perm,
                                                 detail: errMsg, code: info.code, reason: info.reason, nextStep: info.nextStep)
                         WorkflowManager.shared.updateStep(tool: originalName, detail: errMsg, success: false)
-                        // v3.1.1: 连续failed 3 次就拦截，不让 AI 继续循环
-                        if callCount >= loopThreshold {
-                            throw MCPError.failed("🚫 LOOP BLOCKED: You've called this tool \(callCount) times with same params and it keeps failing with the same error. STOP. Do NOT call it again. Try a completely different approach, or ask the user what to do. Error: \(errMsg)")
+                        // v6.9.0: 连续同参数+同错误 2 次即熔断，并给出替代工具（见 loopBlockedError）
+                        let streak = noteFailure(callKey: ck, errorMessage: errMsg)
+                        if streak.blocked {
+                            throw loopBlockedError(tool: originalName, params: params,
+                                                   errorMessage: errMsg, count: streak.count)
                         }
                         throw MCPError.classified(errMsg, code: info.code, reason: info.reason, nextStep: info.nextStep)
                     }
@@ -872,6 +951,8 @@ public final class ToolRegistry: ObservableObject {
                 AuditLog.shared.logTool(originalName, status: .success,
                                         elapsedMs: elapsedMs, dataBytes: bytes, permission: perm)
                 WorkflowManager.shared.updateStep(tool: originalName, detail: "\(elapsedMs)ms", success: true)
+                // v6.9.0：成功即清零该调用的失败计数，避免历史失败影响后续判断
+                clearFailure(callKey: ck)
 
                 // v3.0.90：存结果缓存 (OK才存，failed不缓存）
                 // v4.3.25: 慢结果 (超看门狗）也不缓存——避免"慢"成为被复读的常态结果
@@ -894,10 +975,11 @@ public final class ToolRegistry: ObservableObject {
                     data = Self.compactResult(result)
                 }
                 data.removeValue(forKey: "message")
-                // v3.0.90：告诉 AI 它调了几次，让 AI 自己判断是不是在循环
+                // v6.9.0：成功路径不再用「调用次数」判断循环（成功 2 次很常见，报警只会干扰）。
+                // 改为：同参数连续 3 次成功且结果一致时才提示——此时多半是在重复读同一份静态数据。
                 data["_call_count"] = callCount
-                if callCount >= loopThreshold {
-                    data["_loop_hint"] = "⚠️ You've called this tool \(callCount) times with the same params in the last \(Int(loopWindow))s. If the result is the same, you're probably looping. Try a different approach or ask the user."
+                if callCount >= 3 {
+                    data["_loop_hint"] = "⚠️ 同参数已成功调用 \(callCount) 次（\(Int(loopWindow))秒内）。如果结果完全一样，说明这一步已经没有新信息，请直接进入下一步或换目标；不要继续重复。"
                 }
                 // v2.9.167：_noMessage 标记——数据自解释的工具返回里明确不需要顶层
                 // message (total/tools 已自解释），省 ~10 token/次
@@ -916,7 +998,30 @@ public final class ToolRegistry: ObservableObject {
                 return ["ok": true, "message": msg, "data": data]
             } catch {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
-                let errDesc = (error as? MCPError)?.description ?? error.localizedDescription
+                var errDesc = (error as? MCPError)?.description ?? error.localizedDescription
+
+                // v6.9.0：参数类报错统一增强——工具层大多只写 "bundle_id required"，
+                // 模型看不出「自己传了什么、该换成什么工具」，于是原样重试。
+                // 在这里补全上下文（工具层无需逐个改）。
+                if errDesc.contains("bundle_id required") || errDesc.contains("invalid params") {
+                    let keys = params.keys.filter { !$0.hasPrefix("_") }.sorted()
+                    let passed = keys.isEmpty ? "(无)" : keys.joined(separator: ", ")
+                    var hint = "\n你传的参数: [\(passed)]"
+                    if errDesc.contains("bundle_id required") {
+                        if keys.contains("path") {
+                            hint += "\n⚠️ 你把 path 传给了这个工具，但它要的是 bundle_id。"
+                            hint += "\n如果要检查二进制文件（加密/架构/签名），改用:"
+                            for alt in ToolParamHelp.binaryCheckAlternatives(
+                                pathHint: (params["path"] as? String) ?? "<文件绝对路径>") {
+                                hint += "\n  - \(alt)"
+                            }
+                        }
+                        hint += "\n取 bundle_id: \(ToolParamHelp.howToGetBundleId)"
+                    }
+                    hint += "\n补全参数后重试一次；如果这个工具本身选错了，换上面列出的工具。"
+                    errDesc += hint
+                }
+
                 // v2.9.128：failed记录 CLI 四分类 code/reason/nextStep (供健康度聚合 + AI 自查）
                 let classified: MCPError
                 if case MCPError.classified(_, code: let c, reason: let r, nextStep: let n) = error {
