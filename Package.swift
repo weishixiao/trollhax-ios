@@ -4,7 +4,11 @@ import PackageDescription
 let package = Package(
     name: "TrollHax",
     // v2.9.250: 部署目标 16→15 治本——按16编译会引用 iOS16+ 符号(URLRequest.httpMethod/timeoutInterval 等 availability 标注错误的 Swift setter),iOS15.6 dyld 启动崩;15 避开 iOS16+ API 且保留全部 iOS15 API(safeAreaInset 等),降14过度会报 iOS15 API 编译错误
-    platforms: [.iOS(.v15)],
+    // v6.8.1：补声明 macOS——SwiftPM 在解析依赖时会对所有平台做兼容性检查。
+    // 只写 .iOS 时 macOS 按默认 10.13 处理，而 MachOKit 要求 10.15+，
+    // 构建直接报 "requires macos 10.13, but depends on product 'MachOKit' which requires macos 10.15"。
+    // 这里是 macOS 构建时的下限，不影响 iOS 产物。
+    platforms: [.iOS(.v15), .macOS(.v10_15)],
     dependencies: [
         // v2.9.370：RSKGrowingTextView——成熟开源聊天输入框，自动高度+占位符，替代手写 UIViewRepresentable
         .package(url: "https://github.com/ruslanskorb/RSKGrowingTextView.git", from: "7.0.0"),
