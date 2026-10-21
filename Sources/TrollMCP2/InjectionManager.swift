@@ -238,6 +238,23 @@ final class InjectionManager {
         if geteuid() == 0, let native = nativeFileOp(name, args) {
             return native
         }
+        // v6.9.3：文件操作类**优先直写**（对齐 TrollFools）。
+        //
+        // TrollFools 全程用 FileManager 直接写 App Bundle，没有任何提权逻辑——
+        // 它能写只是因为 entitlements 里的 com.apple.private.security.storage.AppBundles
+        // 生效了。TrollHax 配了同样的 entitlement，那么这类操作根本不需要 root。
+        //
+        // 旧顺序「先 spawnRoot 失败再兜底」有两个问题：
+        //   1. 每次多起一个进程，慢
+        //   2. spawnRoot 在 rootHide 下可能返回超时/非典型错误码，
+        //      兜底判据 result.code != 0 未必触发 → 明明能写的操作报失败
+        // 改成先直写：成功就直接返回，失败才去提权。
+        var nativeError: String? = nil
+        if let native = nativeFileOp(name, args) {
+            if native.0 == 0 { return (0, native.1) }
+            // 直写失败：记下来，若后面提权也失败，至少把两边的真实原因都给出去
+            nativeError = native.1
+        }
         // v6.6.10：越狱环境专用提权路径。
         // rootHide/Relaxin 会拦截 persona spawn → 恒返回 85 (ENOSYS)，那条路注定失败。
         // 越狱的 amfid 已绕过签名校验，只要 helper 有 setuid + root 属主，
@@ -269,7 +286,8 @@ final class InjectionManager {
             case 85:  hint = "（persona 被拒 ENOSYS，且该操作不能走 native 直写）"
             default:  hint = "（越狱 spawn 失败 errno=\(jb.code)）"
             }
-            return (jb.code, "[越狱环境] " + hint + " " + jb.diagPrefix + jb.output)
+            let nativeNote = nativeError.map { " | 直写也失败: \($0)" } ?? ""
+            return (jb.code, "[越狱环境] " + hint + " " + jb.diagPrefix + jb.output + nativeNote)
         }
 
         // v2.9.284：去掉 [name] 前缀——argv[0]=bin 已是可执行路径 (v2.9.281 修复），
@@ -308,7 +326,8 @@ final class InjectionManager {
         if result.code != 0, let native = nativeFileOp(name, args) {
             return (native.0, native.1.isEmpty ? "[native fallback OK，无需 root]" : native.1)
         }
-        return (result.code, result.output)
+        let nativeNote = nativeError.map { " | 直写也失败: \($0)" } ?? ""
+        return (result.code, result.output + nativeNote)
     }
 
     /// v2.9.126：root 环境下 FileManager 原生映射 (对齐 TrollFools isPrivileged 快路径）。
