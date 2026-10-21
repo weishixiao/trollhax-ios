@@ -36,6 +36,7 @@ $ROOT/src/utils/managers/PatchCore.mm
 $ROOT/src/utils/managers/LockCore.mm
 $ROOT/src/utils/managers/VMLockEngine.mm
 $ROOT/src/utils/managers/VMLockManager.mm
+$ROOT/src/utils/managers/VMSignatureModel.mm
 $ROOT/src/utils/managers/VMPointerChain.mm
 $ROOT/src/utils/managers/VMRVAPatch.mm
 "

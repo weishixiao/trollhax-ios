@@ -10,7 +10,17 @@
 #import <Foundation/Foundation.h>
 #import "VMMemoryEngine.h"
 
-/// UTF-8 编码常量（0），供 Swift 侧传入 encoding 参数
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/// UTF-8 编码常量（0），供 Swift 侧传入 encoding 参数。
+/// 必须 extern "C"：本文件按 C++ 编译（.mm），否则符号会被修饰成
+/// __Z26TrollHaxVansonUTF8Encodingv，与 Swift 引用的 _TrollHaxVansonUTF8Encoding 对不上。
 VMStringEncoding TrollHaxVansonUTF8Encoding(void) {
     return VMStringEncodingUTF8;
 }
+
+#ifdef __cplusplus
+}
+#endif
