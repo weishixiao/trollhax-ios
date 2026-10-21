@@ -24,6 +24,7 @@ fi
 
 # 源文件清单（与 VansonEngine/ 目录结构对应）
 SRCS="
+$ROOT/src/TrollHaxVansonBridge.mm
 $ROOT/src/memory/VMMemoryEngine.mm
 $ROOT/src/memory/core/MemoryCore.cpp
 $ROOT/src/memory/core/SessionCore.mm

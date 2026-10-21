@@ -388,7 +388,11 @@ final class VansonMemoryBridge {
         try requireAttached()
         let eng = engine
         if type == .string {
-            return eng.readString(atAddress: address, encoding: VMStringEncodingUTF8, maxBytes: UInt(max(1, length))) ?? ""
+            // 编码常量由 ObjC 侧 TrollHaxVansonUTF8Encoding() 提供，
+            // 避开 VMStringEncoding（NS_ENUM）在 Swift 侧的导入名差异
+            return eng.readString(atAddress: address,
+                                  encoding: TrollHaxVansonUTF8Encoding(),
+                                  maxBytes: UInt(max(1, length))) ?? ""
         }
         return eng.readAddress(address, type: type.raw) ?? ""
     }
@@ -399,7 +403,8 @@ final class VansonMemoryBridge {
         try requireAttached()
         let eng = engine
         if type == .string {
-            return eng.writeString(atAddress: address, value: value, encoding: VMStringEncodingUTF8)
+            return eng.writeString(atAddress: address, value: value,
+                                   encoding: TrollHaxVansonUTF8Encoding())
         }
         return eng.writeAddress(address, value: value, type: type.raw)
     }
