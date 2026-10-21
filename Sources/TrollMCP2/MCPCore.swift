@@ -30,7 +30,16 @@ public struct ToolDefinition {
     /// AI 规划任务时按此顺序执行，避免前置不满足就调用导致报错。
     public let prerequisites: [String]
 
-    public init(name: String, summary: String, parameters: [String: String] = [:], returns: [String: String] = [:], verified: Bool = false, category: String = "misc", uiSummary: String = "", minIOSMajor: Int? = nil, maxIOSMajor: Int? = nil, requiresJailbreak: Bool = false, requiresTrollStore: Bool = false, remoteOnly: Bool = false, prerequisites: [String] = []) {
+    // MARK: v6.9.1 结构化参数（可选，未填则回退到 parameters 字典）
+
+    /// 结构化参数定义——有类型 / 必填 / 枚举 / 正例。
+    /// 填了就用它生成 JSON Schema（比 parameters 字典精确得多）；留空则用 parameters 兜底。
+    public let paramSpecs: [ToolParam]
+
+    /// 子命令级参数要求——让模型知道「inspect 只要 bundle_id」「enable 要 bundle_id+dylib_path」。
+    public let variants: [ToolVariant]
+
+    public init(name: String, summary: String, parameters: [String: String] = [:], returns: [String: String] = [:], verified: Bool = false, category: String = "misc", uiSummary: String = "", minIOSMajor: Int? = nil, maxIOSMajor: Int? = nil, requiresJailbreak: Bool = false, requiresTrollStore: Bool = false, remoteOnly: Bool = false, prerequisites: [String] = [], paramSpecs: [ToolParam] = [], variants: [ToolVariant] = []) {
         self.name = name
         self.summary = summary
         self.parameters = parameters
@@ -44,6 +53,8 @@ public struct ToolDefinition {
         self.requiresTrollStore = requiresTrollStore
         self.remoteOnly = remoteOnly
         self.prerequisites = prerequisites
+        self.paramSpecs = paramSpecs
+        self.variants = variants
     }
 
     /// UI 显示用：优先 uiSummary (中文），否则 fallback 到 summary
@@ -551,18 +562,44 @@ public final class ToolRegistry: ObservableObject {
             used.insert(safe)
             map[safe] = def.name
 
-            var props: [String: [String: String]] = [:]
-            for (k, v) in def.parameters {
-                props[k] = ["type": "string", "description": v]
+            // v6.9.1：优先用结构化 paramSpecs 生成精确 schema（有类型/枚举/正例/必填）；
+            // 未迁移的工具回退到旧的 [String: String] 全 string 逻辑。
+            var props: [String: Any] = [:]
+            var required: [String] = []
+
+            if !def.paramSpecs.isEmpty {
+                for spec in def.paramSpecs {
+                    props[spec.name] = spec.schemaFragment()
+                    if spec.required { required.append(spec.name) }
+                }
+            } else {
+                for (k, v) in def.parameters {
+                    props[k] = ["type": "string", "description": v]
+                }
             }
+
             // v3.1.66：required 只保留子命令选择器 (command/action），其余参数按子命令按需提供。
             // v3.1.69：显式找 command/action 键——Dictionary.keys 是哈希顺序，prefix(1) 可能
             // 落到任意参数 (如 artifact 的 name），导致 AI 被迫填无关参数 (AI 反馈实锤）。
-            let selectorKey = def.parameters.keys.first { $0 == "command" || $0 == "action" }
+            let selectorCandidates = def.paramSpecs.isEmpty
+                ? Array(def.parameters.keys)
+                : def.paramSpecs.map(\.name)
+            if let selectorKey = selectorCandidates.first(where: { $0 == "command" || $0 == "action" }) {
+                if !required.contains(selectorKey) { required.append(selectorKey) }
+            }
+
             // v3.2.0：description 追加前置条件——AI 看到工具定义即知依赖顺序，不用撞错误才知道
             var desc = def.summary
             if !def.prerequisites.isEmpty {
                 desc += " 前置条件: " + def.prerequisites.joined(separator: "; ") + "。不满足时先执行前置步骤再调用本工具，不要直接调用。"
+            }
+            // v6.9.1：把每个子命令的参数要求压成速查表附在描述里。
+            // 这是解决「inspect 到底要 bundle_id 还是 path」这类困惑的关键——
+            // 模型不必从 19 个子命令的公共参数池里猜。
+            if !def.variants.isEmpty {
+                desc += " 子命令参数速查: "
+                desc += def.variants.map { $0.cheatsheet }.joined(separator: " | ")
+                desc += "。按所选子命令只传它需要的参数。"
             }
             result.append([
                 "type": "function",
@@ -572,7 +609,7 @@ public final class ToolRegistry: ObservableObject {
                     "parameters": [
                         "type": "object",
                         "properties": props,
-                        "required": selectorKey.map { [$0] } ?? []
+                        "required": required
                     ]
                 ]
             ])

@@ -768,7 +768,53 @@ final class InjectionExecTool: MCPTool {
             "dylib_path": "Dylib path (for enable)",
             "query": "Search query (for list)"
         ],
-        verified: true, category: "injection", prerequisites: ["enable/static/enable_persisted 前确认 App 已安装且 bundle_id 有效 (先 app status 确认)", "iOS 17+ 注入依赖 ct_bypass 可能失效 (先用 inject diagnose 确认环境)", "【密文 App(cryptid=1)无法注入 hook】——报 spawnRoot failed 85 / sandbox blocked mmap 时不重试: 必须先 app command=decrypt 砸壳 → app command=replace_decrypted 就地替换(自动完整重签) → App 能启动后再注入。注入失败时看 message 里的归因(diag)决定方向, 连续失败2次换方法。", "hook 完整链路: project action=generate_tweak name=<tweak> bundle_id=<app> → 写 tweaks/<name>/Tweak.x → github command=trigger_build workflow=build-tweak.yml tweak=<name> → github command=download_artifact 取 dylib → dylib 传目标 App 数据容器 Documents(工作区会被 sandbox 挡 mmap) → inject command=enable bundle_id=<app> dylib_path=<App容器内dylib路径> → app restart 验证"])
+        verified: true, category: "injection", prerequisites: ["enable/static/enable_persisted 前确认 App 已安装且 bundle_id 有效 (先 app status 确认)", "iOS 17+ 注入依赖 ct_bypass 可能失效 (先用 inject diagnose 确认环境)", "【密文 App(cryptid=1)无法注入 hook】——报 spawnRoot failed 85 / sandbox blocked mmap 时不重试: 必须先 app command=decrypt 砸壳 → app command=replace_decrypted 就地替换(自动完整重签) → App 能启动后再注入。注入失败时看 message 里的归因(diag)决定方向, 连续失败2次换方法。", "hook 完整链路: project action=generate_tweak name=<tweak> bundle_id=<app> → 写 tweaks/<name>/Tweak.x → github command=trigger_build workflow=build-tweak.yml tweak=<name> → github command=download_artifact 取 dylib → dylib 传目标 App 数据容器 Documents(工作区会被 sandbox 挡 mmap) → inject command=enable bundle_id=<app> dylib_path=<App容器内dylib路径> → app restart 验证"]
+        // v6.9.1：结构化参数——明确类型与正例，避免 AI 把 path/bundle_id 混用
+        paramSpecs: [
+            .e("command", "子命令（必填）",
+               values: ["enable", "disable", "static", "enable_persisted", "status", "inspect",
+                        "list", "remove", "restore", "mem", "diagnose", "verify",
+                        "ipa_inspect", "dylib_inspect", "binary_symbols", "hook_apply",
+                        "probe_inspect", "plugin_list", "keychain_wipe", "load_dylib"],
+               required: true, example: "status"),
+            .s("bundle_id", "目标 App 包名。查状态/开关都用它，不接受文件路径",
+               example: "com.xingin.discover"),
+            .s("path", "文件路径（仅 ipa_inspect / dylib_inspect / binary_symbols / load_dylib 用）",
+               example: "/var/containers/Bundle/Application/xxx/App.app/App"),
+            .s("dylib_path", "要注入的 dylib 路径（enable / mem / diagnose 用）"),
+            .s("query", "按名称或 bundle_id 模糊搜索（list / probe_inspect 用）", example: "小红书"),
+            .i("limit", "返回条数上限（list 用）", example: "20"),
+            .b("auto_launch", "mem 时是否自动拉起 App"),
+            .b("restart", "hook_apply 后是否重启 App"),
+            .s("config", "hook 配置（hook_apply 用）"),
+            .s("class_name", "类名前缀或全名（probe_inspect 用）"),
+            .s("prefix", "方法名前缀过滤（probe_inspect 用）"),
+            .s("detail", "详细程度（ipa_inspect 用）", example: "full"),
+            .s("direction", "符号扫描方向（binary_symbols 用）", example: "all"),
+        ],
+        // v6.9.1：子命令参数速查表——解决「inspect 到底要 bundle_id 还是 path」
+        variants: [
+            .init("enable", requires: ["bundle_id", "dylib_path"], note: "注入 dylib，两个都要"),
+            .init("disable", requires: ["bundle_id"]),
+            .init("static", requires: ["bundle_id"], note: "静态注入(改二进制)"),
+            .init("enable_persisted", requires: ["bundle_id"]),
+            .init("status", requires: ["bundle_id"], note: "查注入状态"),
+            .init("inspect", requires: ["bundle_id"], note: "只认 bundle_id，不认 path"),
+            .init("list", accepts: ["query", "limit"], note: "搜 App 拿 bundle_id"),
+            .init("remove", requires: ["bundle_id"]),
+            .init("restore", requires: ["bundle_id"], note: "还原原始二进制"),
+            .init("mem", requires: ["bundle_id"], accepts: ["dylib_path", "auto_launch"]),
+            .init("diagnose", requires: ["bundle_id"], accepts: ["dylib_path"], note: "注入失败先跑这个"),
+            .init("verify", requires: ["bundle_id"]),
+            .init("ipa_inspect", requires: ["path"], accepts: ["detail"], note: "看 IPA 包，用 path"),
+            .init("dylib_inspect", requires: ["path"], note: "看 dylib，用 path"),
+            .init("binary_symbols", requires: ["path"], accepts: ["direction"], note: "提符号，用 path"),
+            .init("hook_apply", requires: ["bundle_id"], accepts: ["config", "restart"]),
+            .init("probe_inspect", requires: ["bundle_id"], accepts: ["query", "class_name", "prefix"]),
+            .init("plugin_list", note: "无参数"),
+            .init("keychain_wipe", requires: ["bundle_id"]),
+            .init("load_dylib", requires: ["path"]),
+        ])
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {
