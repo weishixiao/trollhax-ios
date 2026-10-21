@@ -20,6 +20,8 @@ TrollHaxHUD_FILES = \
     sources/HUDHelper.mm \
     sources/TSEventFetcher.mm \
     sources/HUDRootViewController.mm \
+    sources/SpeedMonitor.mm \
+    sources/SpeedHUDView.mm \
     sources/UITouch-KIFAdditions.m \
     sources/IOHIDEvent+KIF.m \
     sources/HUDMain.mm

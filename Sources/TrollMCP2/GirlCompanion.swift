@@ -47,6 +47,10 @@ final class GirlCompanion: ObservableObject {
     @Published var bubbleStyle: Int {
         didSet { UserDefaults.standard.set(bubbleStyle, forKey: "trollmcp2.bubble_style") }
     }
+    // v6.9.6：网速显示（参考 TrollSpeed）。HUD 需重启才生效——由调用方在切换后 restart。
+    @Published var showSpeed: Bool {
+        didSet { UserDefaults.standard.set(showSpeed, forKey: "trollmcp2.hud_speed") }
+    }
     private init() {
         enabled = UserDefaults.standard.bool(forKey: "trollmcp2.girl_companion_enabled")
         selectedCharacter = GirlCharacter.stored(rawValue: UserDefaults.standard.string(forKey: "trollmcp2.girl_character"))
@@ -54,6 +58,7 @@ final class GirlCompanion: ObservableObject {
         let savedSize = UserDefaults.standard.double(forKey: "trollmcp2.girl_float_size")
         floatSize = (savedSize > 0) ? savedSize : 200
         bubbleStyle = UserDefaults.standard.integer(forKey: "trollmcp2.bubble_style")
+        showSpeed = UserDefaults.standard.bool(forKey: "trollmcp2.hud_speed")
     }
 }
 

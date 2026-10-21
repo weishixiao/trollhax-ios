@@ -137,7 +137,20 @@ final class HUDManager {
     }
     private let daemonLabel = "com.trollhax.hudservices"
 
-    private func writeDaemonPlist(bin: String) -> Bool {
+    /// v6.9.6：两条启动路径（launchd plist / posix_spawn）必须传同一套参数。
+    /// 旧实现 plist 里只写了 -hud，导致走 launchctl 时 -char/-size 全部失效、
+    /// 永远用默认角色和尺寸；网速开关同样会丢。
+    private func hudLaunchArgs() -> [String] {
+        let hudSize = UserDefaults.standard.double(forKey: "trollmcp2.girl_float_size")
+        let sizeArg = (hudSize >= 170 && hudSize <= 300) ? Int(hudSize) : 200
+        let charRaw = UserDefaults.standard.string(forKey: "trollmcp2.girl_character")
+        let charArg = GirlCharacter.stored(rawValue: charRaw).iconPrefix
+        let speedOn = UserDefaults.standard.bool(forKey: "trollmcp2.hud_speed")
+        return ["-hud", "-char", charArg, "-size", "\(sizeArg)", "-speed", speedOn ? "1" : "0"]
+    }
+
+    private func writeDaemonPlist(bin: String, args: [String]) -> Bool {
+        let argXML = args.map { "\t\t<string>\($0)</string>" }.joined(separator: "\n")
         let xml = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -167,7 +180,7 @@ final class HUDManager {
         \t<key>ProgramArguments</key>
         \t<array>
         \t\t<string>\(bin)</string>
-        \t\t<string>-hud</string>
+\(argXML)
         \t</array>
         \t<key>RunAtLoad</key>
         \t<true/>
@@ -209,11 +222,13 @@ final class HUDManager {
             return false
         }
         appendLog("start: launching \(bin) -hud")
+        // v6.9.6：统一参数（角色/尺寸/网速），两条启动路径共用
+        let launchArgs = hudLaunchArgs()
 
         // 主路径：写 LaunchDaemon plist + launchctl load（launchd 以 root+App 拉起，AMFI 放行）
         // v4.5.9：launchctl 路径探测——写死 /usr/bin 在部分 iOS 上 ENOENT 会误导诊断
         if let lctl = launchctlBinary {
-            if writeDaemonPlist(bin: bin) {
+            if writeDaemonPlist(bin: bin, args: launchArgs) {
                 let (code, out) = InjectionManager.shared.spawnRoot(lctl, args: ["load", daemonPlistPath], timeout: 15)
                 if code == 0 {
                     lastStartError = nil
@@ -234,11 +249,7 @@ final class HUDManager {
         // v6.0.8 修复：GirlCharacter.rawValue 是中文（"小萝莉"/"兔娘"/"猫娘"），不能用 == "rabit" 判断——
         // 用 iconPrefix（loli→girl / rabit→rabit）得到正确的 HUD 图前缀
         // v6.0.12：走 GirlCharacter.stored(rawValue:) 兼容老用户旧值"御姐兔女郎"（映射 .rabit），避免升级后误拉 girl
-        // v6.0.28：改成读可爱助手里的滑块值（170-300pt），去掉旧的设置页面悬浮尺寸
-        let hudSize = UserDefaults.standard.double(forKey: "trollmcp2.girl_float_size")
-        let sizeArg = (hudSize >= 170 && hudSize <= 300) ? Int(hudSize) : 200
-        let charRaw = UserDefaults.standard.string(forKey: "trollmcp2.girl_character")
-        let charArg = GirlCharacter.stored(rawValue: charRaw).iconPrefix
+        // v6.9.6：参数集中在 hudLaunchArgs()（含 v6.0.28 的 170-300pt 尺寸与角色前缀逻辑）
         // v6.3.8：双候选依次尝试——旧实现只试一个候选就整体失败（用户实测
         // "拉起失败 (posix_spawn detach)"）。两个候选各试一次：
         //   ① 主可执行（-hud 双模式；HUD ObjC 核心已链接进主可执行，TrollStore 有效签名）
@@ -248,7 +259,7 @@ final class HUDManager {
             candidates.append(mainExe)
         }
         if bin != (Bundle.main.executablePath ?? "") { candidates.append(bin) }
-        let spawnArgs = ["-hud", "-char", charArg, "-size", "\(sizeArg)"]
+        let spawnArgs = launchArgs
         var started = false
         for cand in candidates {
             if spawnDetached(cand, args: spawnArgs) {
@@ -264,7 +275,7 @@ final class HUDManager {
             return false
         }
         lastStartError = nil
-        appendLog("start OK (posix_spawn detach 不提权, 常驻, size=\(sizeArg), char=\(charArg))")
+        appendLog("start OK (posix_spawn detach 不提权, 常驻, args=\(launchArgs.joined(separator: " ")))")
         if let attrs = try? FileManager.default.attributesOfItem(atPath: bin),
            let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 {
             UserDefaults.standard.set(mtime, forKey: hudBinMtimeKey)
