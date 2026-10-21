@@ -559,7 +559,51 @@ final class AppExecTool: MCPTool {
             "duration": "Duration seconds (for stats)",
             "text": "Text to input (for open_and_input)"
         ],
-        verified: true, category: "app_control", prerequisites: ["analyze/hook 加密 App(cryptid=1)必须先砸壳: decrypt → replace_decrypted → restore_binary 恢复(流程见 summary)", "install/uninstall 需 TrollStore entitlements; 失败看 diagnose"])
+        verified: true, category: "app_control", prerequisites: ["analyze/hook 加密 App(cryptid=1)必须先砸壳: decrypt → replace_decrypted → restore_binary 恢复(流程见 summary)", "install/uninstall 需 TrollStore entitlements; 失败看 diagnose"]
+        // v6.9.2：结构化参数——app 有 20 个子命令，参数混用最严重（bundle_id / path / ipa_path）
+        paramSpecs: [
+            .e("command", "子命令（必填）",
+               values: ["launch", "stop", "restart", "status", "stats", "cache_inspect", "cache_clear",
+                        "open_and_input", "deps", "install", "uninstall", "duplicate", "diagnose",
+                        "encrypt_info", "entitlements", "decrypt", "replace_decrypted",
+                        "restore_binary", "launch_options", "inject_package"],
+               required: true, example: "status"),
+            .s("bundle_id", "目标 App 包名。除 install / replace_decrypted / inject_package 外都必填",
+               example: "com.xingin.discover"),
+            .s("path", "IPA 文件路径。install 的另一种写法（等价 ipa_path）",
+               example: "/var/mobile/Downloads/App.ipa"),
+            .s("ipa_path", "IPA 文件路径。install / replace_decrypted / inject_package 用",
+               example: "/var/mobile/Downloads/App.ipa"),
+            .s("dylib_path", "要注入的 dylib 路径（仅 inject_package 用）"),
+            .s("new_bundle_id", "改包后的新包名（仅 inject_package 用）", example: "com.example.app.mod"),
+            .s("new_name", "改包后的显示名（仅 inject_package 用）"),
+            .b("auto_install", "打完后自动装（仅 inject_package 用）"),
+            .i("duration", "采样时长秒（仅 stats 用）", example: "10"),
+            .s("text", "要输入的文本（仅 open_and_input 用）"),
+        ],
+        // v6.9.2：子命令参数速查——明确区分 bundle_id（装好的 App）与 ipa_path（安装包文件）
+        variants: [
+            .init("launch", requires: ["bundle_id"]),
+            .init("stop", requires: ["bundle_id"]),
+            .init("restart", requires: ["bundle_id"]),
+            .init("status", requires: ["bundle_id"], note: "查运行状态"),
+            .init("stats", requires: ["bundle_id"], accepts: ["duration"], note: "CPU/内存采样"),
+            .init("cache_inspect", requires: ["bundle_id"]),
+            .init("cache_clear", requires: ["bundle_id"]),
+            .init("open_and_input", requires: ["bundle_id"], accepts: ["text"], note: "拉起并输入"),
+            .init("deps", requires: ["bundle_id"], note: "看依赖的 dylib"),
+            .init("install", requires: ["ipa_path 或 path（二选一）"], note: "装包，要 IPA 文件路径，不是 bundle_id"),
+            .init("uninstall", requires: ["bundle_id"]),
+            .init("duplicate", requires: ["bundle_id"], note: "复制成第二个 App"),
+            .init("diagnose", requires: ["bundle_id"], note: "启动失败先跑这个"),
+            .init("encrypt_info", requires: ["bundle_id"], note: "查是否加密(cryptid)"),
+            .init("entitlements", requires: ["bundle_id"], note: "查权限 plist"),
+            .init("decrypt", requires: ["bundle_id"], note: "砸壳第一步"),
+            .init("replace_decrypted", requires: ["bundle_id", "ipa_path"], note: "砸壳第二步，就地替换"),
+            .init("restore_binary", requires: ["bundle_id"], note: "替换后启动不了就回滚"),
+            .init("launch_options", requires: ["bundle_id"]),
+            .init("inject_package", requires: ["dylib_path"], accepts: ["ipa_path", "new_bundle_id", "new_name", "auto_install"], note: "改包+注入+重装"),
+        ])
     
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {
