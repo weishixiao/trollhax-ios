@@ -150,7 +150,9 @@ final class HUDManager {
     }
 
     private func writeDaemonPlist(bin: String, args: [String]) -> Bool {
-        let argXML = args.map { "\t\t<string>\($0)</string>" }.joined(separator: "\n")
+        // 每行自带与 plist 其它条目一致的缩进：多行字符串里插值若含换行，
+        // 后续行不会自动继承缩进，必须在生成时就带上。
+        let argXML = args.map { "        \\t\\t<string>\($0)</string>" }.joined(separator: "\n")
         let xml = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -180,7 +182,7 @@ final class HUDManager {
         \t<key>ProgramArguments</key>
         \t<array>
         \t\t<string>\(bin)</string>
-\(argXML)
+        \(argXML)
         \t</array>
         \t<key>RunAtLoad</key>
         \t<true/>

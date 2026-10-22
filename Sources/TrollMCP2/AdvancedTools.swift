@@ -1,5 +1,8 @@
 import Foundation
-// v6.9.5：app.entitlements 走静态 Mach-O 解析（MachoTools 后端），不 spawn ldid
+// v6.9.5：app.entitlements 走静态 Mach-O 解析，不 spawn ldid。
+// extractEntitlements 直接消费 MachOKit 的 MachOFile / CodeSign 结构，必须显式导入
+// （与 MachoTools.swift 用同一 @_spi 访问级别）。
+@_spi(Support) import MachOKit
 
 import UIKit
 import Security
