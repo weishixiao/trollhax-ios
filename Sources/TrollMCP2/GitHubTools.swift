@@ -147,6 +147,19 @@ final class GitHubTriggerBuildTool: MCPTool {
         }
         // v6.6.20：403/404 分别归因——旧实现只回 "trigger failed (HTTP 403)"，
         // 看着像登录问题，实际通常是 ①仓库名过期（trollmcp2 已改名）②Token 缺 workflow 权限。
+        // v6.6.7+：422 说明 workflow 未声明 tweak input，去掉 inputs 再触发一次（全量构建）。
+        if code == 422 {
+            let body2: [String: Any] = ["ref": ref]
+            let (code2, json2) = GHAPI.post(
+                "\(GHConfig.apiBase)/repos/\(owner)/\(repo)/actions/workflows/\(workflow)/dispatches",
+                token: token, body: body2)
+            if code2 == 204 {
+                return ["triggered": true, "workflow": workflow, "ref": ref,
+                        "note": "workflow 未声明 tweak input，已按全量构建触发（ref=\(ref))"]
+            }
+            return ["triggered": false, "http_status": code2, "retry_without_inputs": true,
+                    "message": (json2?["message"] as? String) ?? "trigger failed after retry without inputs"]
+        }
         let serverMsg = (json?["message"] as? String) ?? "trigger failed"
         var hint = ""
         switch code {

@@ -1437,7 +1437,10 @@ final class InjectionManager {
                         throw MCPError.failed("static injection has no candidate and App not running, memory fallback unavailable (open the App manually first)")
                     }
                     let (mc, mo) = injectDylib(pid: Int(pid), dylib: memDylib)
-                    let ok = mo.contains("dlopen succeeded")
+                    // 注入成功判定：与 injectDylib 主路径同条件（输出成功特征），再以退出码作为补充信号，
+                    // 避免仅凭输出字符串误判（opainject 输出措辞在不同版本可能不同）
+                    let successMarks = ["dlopen succeeded", "Injected", "injected successfully"]
+                    let ok = successMarks.contains { mo.contains($0) } || mc == 0
                     let alive = findPidByExecutable(bundlePath: app.path) > 0
                     AuditLog.shared.log("injection.mem_fallback", detail: "\(bundleId) ok=\(ok) alive=\(alive)")
                     return [

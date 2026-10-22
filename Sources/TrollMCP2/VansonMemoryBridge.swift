@@ -209,7 +209,8 @@ final class VansonMemoryBridge {
                      limit: Int = 2000, timeout: TimeInterval? = nil) throws -> (count: Int, message: String) {
         try requireAttached()
         let eng = engine
-        if let timeout = timeout { defaultTimeout = timeout }
+        // 调用方可传 timeout；用局部值覆盖扫描超时，避免改共享的 defaultTimeout 造成并发调用串扰
+        let scanTimeout = timeout ?? defaultTimeout
         // 临时放宽结果上限，扫完后恢复原值（引擎该属性是全局单例状态，别污染用户配置）
         let previousLimit = eng.resultLimit
         if limit > 0 { eng.resultLimit = UInt(limit) }
@@ -224,7 +225,7 @@ final class VansonMemoryBridge {
             msg = m ?? ""
             sem.signal()
         }
-        if sem.wait(timeout: .now() + defaultTimeout) == .timedOut {
+        if sem.wait(timeout: .now() + scanTimeout) == .timedOut {
             throw VansonEngineError.timeout("search")
         }
         return (Int(count), msg)
