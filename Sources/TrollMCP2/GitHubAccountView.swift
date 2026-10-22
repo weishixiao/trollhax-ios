@@ -256,7 +256,9 @@ struct AvatarView: View {
 // MARK: - 添加账号（PAT 登录）
 
 struct AddGitHubAccountView: View {
-    @Environment(\.presentationMode) var presentationMode
+    // v6.9.7：改用 @Environment(\.dismiss)。旧的 presentationMode 在本视图既被 sheet
+    // 弹出、内部又弹出 Safari sheet 的双层呈现下语义混乱，导致登录完成后关不掉本页。
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var store = GitHubAccountStore.shared
     @State private var token = ""
     @State private var errorMsg: String?
@@ -269,7 +271,9 @@ struct AddGitHubAccountView: View {
     @State private var copied = false   // 验证码已自动复制
 
     var body: some View {
-        
+        // v6.9.7：本视图由 .sheet 弹出，内容必须自带 NavigationView，
+        // 否则 .navigationTitle / .toolbar 不生效（"手动登录"按钮看不见，"返回"也没有）。
+        NavigationView {
             Form {
                 webLoginSection
                 patLoginSection
@@ -277,6 +281,11 @@ struct AddGitHubAccountView: View {
             .navigationTitle("登录 GitHub")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // v6.9.7：补"取消"出口。本页由 sheet 弹出，没有导航返回按钮，
+                // 旧实现只能靠下滑手势退出——授权页卡住时用户会以为无法返回。
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("取消") { dismiss() }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if loading {
                         ProgressView().scaleEffect(0.8)
@@ -288,9 +297,31 @@ struct AddGitHubAccountView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showSafari) {
+            .sheet(isPresented: $showSafari, onDismiss: {
+                // v6.9.7：任何关闭路径（完成按钮/下滑手势/授权成功）都复位状态，
+                // 否则下次点"打开授权页"因 showSafari 已 true 而无反应。
+                safariURL = nil
+            }) {
                 if let url = safariURL {
-                    SafariWebView(url: url)
+                    SafariWebView(url: url) {
+                        showSafari = false
+                    }
+                    .ignoresSafeArea()
+                } else {
+                    // 兜底：safariURL 为空时给一个可关闭的提示，而不是弹空白页
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundColor(.orange)
+                        Text("授权链接无效")
+                            .font(.headline)
+                        Text("请返回后重新点击「在浏览器中登录」")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                        Button("关闭") { showSafari = false }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .padding()
                 }
             }
             .onChange(of: store.activeAccount?.login) { _ in
@@ -299,10 +330,11 @@ struct AddGitHubAccountView: View {
                     deviceStep = 2
                     showSafari = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                        presentationMode.wrappedValue.dismiss()
+                        dismiss()
                     }
                 }
             }
+        }
     }
 
     @ViewBuilder private var webLoginSection: some View {
@@ -399,7 +431,7 @@ struct AddGitHubAccountView: View {
                         deviceStep = 2
                         showSafari = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                            presentationMode.wrappedValue.dismiss()
+                            dismiss()
                         }
                     } else {
                         errorMsg = msg ?? "授权失败"
@@ -431,7 +463,7 @@ struct AddGitHubAccountView: View {
         store.verifyAndLogin(token: token.trimmingCharacters(in: .whitespacesAndNewlines)) { ok, msg in
             loading = false
             if ok {
-                presentationMode.wrappedValue.dismiss()
+                dismiss()
             } else {
                 errorMsg = msg
             }
@@ -441,14 +473,42 @@ struct AddGitHubAccountView: View {
 
 // MARK: - 内置 Safari（Device Flow 授权页）
 
+/// v6.9.7：修复"登录验证页打不开/回不来"。
+/// 旧实现有三个问题：
+///   1. SFSafariViewController 未设 delegate —— 用户点"完成"后 SwiftUI 完全不知情，
+///      showSafari 永远停在 true，再次点"打开授权页"无反应（sheet 已在却没变化）。
+///   2. sheet 内容为空时（safariURL 为 nil）会弹一个空白页，看起来就是"无法返回"。
+///   3. 授权页在 sheet 内，没有"取消"出口，用户只能靠系统手势，容易被误认为卡死。
 struct SafariWebView: UIViewControllerRepresentable {
     let url: URL
+    /// 用户点了"完成"/"取消"时回调，用来复位 showSafari
+    var onDismiss: (() -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator { Coordinator(onDismiss: onDismiss) }
 
     func makeUIViewController(context: Context) -> SFSafariViewController {
-        SFSafariViewController(url: url)
+        let vc = SFSafariViewController(url: url)
+        vc.delegate = context.coordinator
+        // 授权页需要输入验证码，读 cookie/站点数据用于 GitHub 已登录态复用
+        vc.dismissButtonStyle = .close
+        vc.preferredControlTintColor = .systemBlue
+        return vc
     }
 
-    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {
+        // 不需要在这里重新加载：SwiftUI 在 url 变化时会重建 SafariWebView
+        // （sheet 内容按 id 刷新），手工 loadViewIfNeeded 反而可能把用户
+        // 正在浏览的授权页重置掉。
+    }
+
+    final class Coordinator: NSObject, SFSafariViewControllerDelegate {
+        let onDismiss: (() -> Void)?
+        init(onDismiss: (() -> Void)?) { self.onDismiss = onDismiss }
+
+        func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
+            onDismiss?()
+        }
+    }
 }
 
 // MARK: - 仓库与 workflow 设置
