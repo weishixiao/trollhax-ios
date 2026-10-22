@@ -54,10 +54,12 @@ struct AuditLogView: View {
         .navigationTitle(L10n.t("page_audit"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // v6.9.9：崩溃 Tab 用自己的 toolbar（CrashLogView 内已有复制/分享/清空），
-            // 这里不再叠加调用记录的导出/清空，避免按钮语义打架。
-            if tab != 3 {
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
+            // v6.9.10：崩溃 Tab 用自己的 toolbar（CrashLogView 内已有复制/分享/清空）。
+            // 注意不能用 if 包裹 ToolbarItemGroup —— @ToolbarContentBuilder 里的
+            // 条件构建需要 iOS 16+（CI 报 'buildIf' is only available in iOS 16.0）。
+            // 改为按钮内部判断，容器结构保持静态。
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if tab != 3 {
                     Button(action: exportLog) { Label(L10n.t("btn_export"), systemImage: "square.and.arrow.up") }
                     Button(L10n.t("btn_clear")) {
                         if tab == 0 { log.clear() }
