@@ -75,23 +75,36 @@ final class PackageTool: MCPTool {
         var dataFileList: [String] = []
         var dataCompressionNote: String?
 
-        while offset + 60 <= data.count {
-            let hdr = safeSlice(data, offset..<offset + 60)
-            guard hdr.count >= 60 else { break }
-            let name = String(data: safeSlice(hdr, 0..<16), encoding: .utf8)?
+        // v6.6.7：所有 ar 偏移先做差值检查，再创建 Data 区间。
+        // 恶意/截断归档里的负数或超大 size 会让 offset 变负，Swift Data
+        // 下标会直接 brk #1（SIGTRAP），而不是抛出可捕获错误。
+        while offset >= 0, offset <= data.count, data.count - offset >= 60 {
+            let headerEnd = offset + 60 // 已由上面的差值检查保证不溢出
+            // 用 safeSlice 归一化 Data 的索引；Data 的切片可能保留原始
+            // lowerBound，随后访问 hdr[0..<16] 会触发 SIGTRAP。
+            let hdr = safeSlice(data, offset..<headerEnd)
+            let name = String(data: hdr[0..<16], encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let sizeStr = String(data: safeSlice(hdr, 48..<58), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0"
-            let size = Int(sizeStr) ?? 0
-            let contentStart = offset + 60
-            // v3.6.16: 防御——ar size 异常(0/超界)时跳过该成员并前移, 避免 subdata 越界
-            guard size > 0, contentStart <= data.count else {
-                ShellDiag.log("package inspectDeb: member '\(name)' size=\(size) 异常 → 跳过 (offset=\(offset), total=\(data.count))")
-                offset = contentStart
-                continue
+            let sizeStr = String(data: hdr[48..<58], encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard let size = Int(sizeStr), size >= 0 else {
+                ShellDiag.log("package inspectDeb: member '\(name)' size='\(sizeStr)' 无效 (offset=\(offset))")
+                break
             }
-            // v3.6.19e: 用 safeSlice 切（恶意 ar size 使 contentStart+size 溢出为负时也不 trap，safeSlice 会钳到安全区间）
-            let content = safeSlice(data, contentStart..<contentStart + size)
+            let contentStart = headerEnd
+            guard size <= data.count - contentStart else {
+                ShellDiag.log("package inspectDeb: member '\(name)' size=\(size) 超出归档 (offset=\(offset), total=\(data.count))")
+                break
+            }
+            let contentEnd = contentStart + size
+            let padding = size & 1
+            guard contentEnd <= data.count - padding else {
+                ShellDiag.log("package inspectDeb: member '\(name)' 缺少 ar 对齐字节 (offset=\(offset))")
+                break
+            }
+            // 归一化 ar member 的 Data 索引；Data slice 会保留原始 lowerBound，
+            // 后续 decompressTar/raw[0...] 需要从 0 开始的索引。
+            let content = safeSlice(data, contentStart..<contentEnd)
 
             // skip symbol table members
             if name != "/" && name != "//" && !name.hasSuffix("/") {
@@ -117,7 +130,7 @@ final class PackageTool: MCPTool {
                     ShellDiag.log("package inspectDeb control.tar=\(name) textLen=\((controlText ?? "").count)")
                 }
             }
-            offset = contentStart + size + (size % 2) // ar aligns to even
+            offset = contentEnd + padding // ar aligns to even
         }
 
         return [
@@ -177,17 +190,37 @@ final class PackageTool: MCPTool {
         if data.prefix(8).elementsEqual(Array("!<arch>\n".utf8)) {
             format = "deb"
             // unpack data.tar.* fully; control.tar content too (control file readable)
+            // v6.6.7：ar header 的 size 来自外部文件，不能直接参与
+            // contentStart + size / Data range 运算；异常值会触发 Swift
+            // 的 brk #1（SIGTRAP），而不是可捕获的 Error。
             var offset = 8
-            while offset + 60 <= data.count {
-                let hdr = data[offset..<offset + 60]
+            while offset >= 0, offset <= data.count, data.count - offset >= 60 {
+                let headerEnd = offset + 60 // 差值检查已保证不会溢出
+                // 用 safeSlice 归一化 Data 的索引；Data 的切片可能保留原始
+                // lowerBound，随后访问 hdr[0..<16] 会触发 SIGTRAP。
+                let hdr = safeSlice(data, offset..<headerEnd)
                 let name = String(data: hdr[0..<16], encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let sizeStr = String(data: hdr[48..<58], encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0"
-                let size = Int(sizeStr) ?? 0
-                let contentStart = offset + 60
-                guard contentStart + size <= data.count else { break }
-                let content = data.subdata(in: contentStart..<contentStart + size)
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard let size = Int(sizeStr), size >= 0 else {
+                    ShellDiag.log("package unpack: member '\(name)' size='\(sizeStr)' 无效 (offset=\(offset))")
+                    break
+                }
+                let contentStart = headerEnd
+                // 先用减法判断，避免 contentStart + size 溢出。
+                guard size <= data.count - contentStart else {
+                    ShellDiag.log("package unpack: member '\(name)' size=\(size) 超出归档 (offset=\(offset), total=\(data.count))")
+                    break
+                }
+                let contentEnd = contentStart + size
+                let padding = size & 1
+                guard padding <= data.count - contentEnd else {
+                    ShellDiag.log("package unpack: member '\(name)' 缺少 ar 对齐字节 (offset=\(offset))")
+                    break
+                }
+                // 归一化 ar member 的 Data 索引；后续 decompressTar 会读取 raw[0...].
+                let content = safeSlice(data, contentStart..<contentEnd)
                 if name != "/" && name != "//" && !name.hasSuffix("/") {
                     if name.hasPrefix("data.tar") {
                         let n = try extractTar(content, into: destURL)
@@ -198,7 +231,7 @@ final class PackageTool: MCPTool {
                         extracted += n
                     }
                 }
-                offset = contentStart + size + (size % 2)
+                offset = contentEnd + padding
             }
         } else if data.prefix(4).elementsEqual([0x50, 0x4B, 0x03, 0x04])
             || data.prefix(4).elementsEqual([0x50, 0x4B, 0x05, 0x06]) {
@@ -336,24 +369,30 @@ final class PackageTool: MCPTool {
         var out: [(String, Data)] = []
         var offset = 0
         var longName: String?
-        while offset + 512 <= data.count {
-            let block = safeSlice(data, offset..<offset + 512)
+        // v6.6.7：tar header 中的 size 也是外部输入；用差值检查
+        // 防止 offset + size / 对齐量溢出后构造非法 Data 区间。
+        while offset >= 0, offset <= data.count, data.count - offset >= 512 {
+            let blockEnd = offset + 512
+            let block = safeSlice(data, offset..<blockEnd)
             guard block.count >= 512 else { break }
             if block.allSatisfy({ $0 == 0 }) { break }
-            var name = String(data: safeSlice(block, 0..<100), encoding: .utf8)?
+            let name = String(data: safeSlice(block, 0..<100), encoding: .utf8)?
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
-            if name.isEmpty { offset += 512; continue }
+            if name.isEmpty {
+                offset = blockEnd
+                continue
+            }
             let sizeStr = String(data: safeSlice(block, 124..<136), encoding: .ascii)?
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\0 ")) ?? "0"
-            let size = Int(sizeStr, radix: 8) ?? 0
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0 ")) ?? ""
+            guard let size = Int(sizeStr, radix: 8), size >= 0 else { break }
             let typeByte = safeByte(block, 156) ?? 0
             let type = typeByte == 0 ? "0" : String(UnicodeScalar(typeByte))
-            let linkName = String(data: safeSlice(block, 157..<257), encoding: .utf8)?
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
-            let contentStart = offset + 512
-            let contentEnd = min(contentStart + size, data.count)
-            guard contentStart <= contentEnd else { break }
-            let content = data.subdata(in: contentStart..<contentEnd)
+            let contentStart = blockEnd
+            guard size <= data.count - contentStart else { break }
+            let contentEnd = contentStart + size
+            let padding = (512 - (size % 512)) % 512
+            guard padding <= data.count - contentEnd else { break }
+            let content = safeSlice(data, contentStart..<contentEnd)
 
             if type == "L" { // GNU longname
                 longName = String(data: content, encoding: .utf8)?
@@ -365,18 +404,22 @@ final class PackageTool: MCPTool {
                     out.append((finalName, content))
                 }
             }
-            let aligned = contentStart + size + ((512 - (size % 512)) % 512)
-            if aligned <= offset { break } // 防死循环
+            let aligned = contentEnd + padding
+            guard aligned > offset else { break } // 防死循环
             offset = aligned
         }
         return out
     }
 
     /// 越界安全切片：永远不 trap（返回实际可读部分，越界处截断为空）。
+    /// 同时把 Data slice 重新归一化为 0-based Data，避免后续使用
+    /// `slice[0..<N]` 时因保留原始 lowerBound 而触发 SIGTRAP。
     private func safeSlice(_ data: Data, _ range: Range<Int>) -> Data {
         let lo = Swift.max(0, Swift.min(range.lowerBound, data.count))
         let hi = Swift.max(lo, Swift.min(range.upperBound, data.count))
-        return data.subdata(in: lo..<hi)
+        let lower = data.index(data.startIndex, offsetBy: lo)
+        let upper = data.index(data.startIndex, offsetBy: hi)
+        return Data(data[lower..<upper])
     }
 
     /// 越界安全单字节读取。
