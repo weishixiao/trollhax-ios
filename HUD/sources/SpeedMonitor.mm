@@ -18,12 +18,11 @@
 #import "SpeedHUDView.h"
 #import <ifaddrs.h>
 #import <net/if.h>
+// struct if_data（ifi_ibytes / ifi_obytes）在 iOS SDK 中声明于此
 #import <net/if_var.h>
-#import <sys/socket.h>
-
-#if TARGET_OS_IPHONE
+// AF_LINK 与 sockaddr_dl
 #import <net/if_dl.h>
-#endif
+#import <sys/socket.h>
 
 typedef struct {
     uint64_t inputBytes;
