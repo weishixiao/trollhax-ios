@@ -116,10 +116,9 @@ struct SettingsView: View {
                          subtitle: "\(ModelStore.shared.configs.count) 个 · \(modelProviderName())",
                          icon: "rectangle.stack.badge.person.crop", color: .blue,
                          destination: AnyView(ModelsView())),
-            SettingsItem(title: L10n.t("row_sys_prompts"),
-                         subtitle: SystemPrompts.shared.selected.name,
-                         icon: "text.book.closed.fill", color: .purple,
-                         destination: AnyView(SystemPromptsView())),
+            // v6.9.10：删除"系统指令"设置入口——模式已由 AI 自动路由（见 SystemPrompts.routerPrompt）。
+            // 仅移除入口，SystemPromptsView / 7 个模式的提示词内容全部保留，
+            // 需要恢复时把本段加回即可。
             SettingsItem(title: L10n.t("row_dev_instructions"),
                          subtitle: devInstructionsSubtitle(),
                          icon: "doc.text.magnifyingglass", color: .orange,
