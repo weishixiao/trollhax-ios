@@ -323,8 +323,21 @@ struct ChatView: View {
             }
         }
         // v3.0.76：快捷标签 sheet
+        // v6.9.11：修复"点终端闪退"——RemoteTerminalView 由 sheet 呈现且内容没有
+        // NavigationView，却用了 .navigationTitle；更关键的是 RemoteAccessView 里
+        // 通过 NavigationLink 进入它，在没有导航容器时 NavigationLink 触发崩溃。
+        // 统一在 present 处包一层 NavigationView（stack 样式，iOS 15 可用）。
         .sheet(isPresented: Binding(get: { AppUIState.shared.quickTerminalPresented }, set: { AppUIState.shared.quickTerminalPresented = $0 })) {
-            RemoteTerminalView()
+            NavigationView {
+                RemoteTerminalView()
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("完成") { AppUIState.shared.quickTerminalPresented = false }
+                        }
+                    }
+            }
+            .navigationViewStyle(.stack)
         }
         .sheet(isPresented: Binding(get: { AppUIState.shared.quickToolsPresented }, set: { AppUIState.shared.quickToolsPresented = $0 })) {
             ToolsView()

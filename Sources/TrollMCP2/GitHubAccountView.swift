@@ -303,10 +303,12 @@ struct AddGitHubAccountView: View {
                 safariURL = nil
             }) {
                 if let url = safariURL {
+                    // v6.9.11：去掉 .ignoresSafeArea()——它会把 SFSafariViewController
+                    // 自带的"完成/关闭"按钮顶到安全区外，用户看不到返回入口，
+                    // 表现为"授权后无法返回"。改为标准内嵌，保留系统关闭按钮。
                     SafariWebView(url: url) {
                         showSafari = false
                     }
-                    .ignoresSafeArea()
                 } else {
                     // 兜底：safariURL 为空时给一个可关闭的提示，而不是弹空白页
                     VStack(spacing: 16) {
@@ -391,6 +393,18 @@ struct AddGitHubAccountView: View {
                     }
                     if let st = store.deviceFlowState, !st.isEmpty, st.contains("失败") || st.contains("确认") {
                         Text(st).font(.caption).foregroundColor(.orange)
+                    }
+                    // v6.9.11：授权页关不掉时的逃生口——停止轮询并回到上一步
+                    if store.isDevicePolling {
+                        Button {
+                            store.cancelDevicePolling()
+                            showSafari = false
+                            deviceStep = 0
+                            deviceCode = nil
+                        } label: {
+                            Label("取消等待，返回上一步", systemImage: "arrow.uturn.backward")
+                        }
+                        .foregroundColor(.secondary)
                     }
                 }
             } else {

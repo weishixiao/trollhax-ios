@@ -227,6 +227,17 @@ final class GitHubAccountStore: ObservableObject {
         }
     }
 
+    /// v6.9.11：用户主动取消等待——停掉轮询定时器并复位状态。
+    /// 只把 isDevicePolling 置 false 不会停 timer，后台仍会继续打 GitHub，
+    /// 一旦成功还会把用户"意外登录"，所以必须显式 cancel。
+    func cancelDevicePolling() {
+        pollTimer?.cancel()
+        pollTimer = nil
+        currentDeviceCode = nil
+        isDevicePolling = false
+        deviceFlowState = nil
+    }
+
     func pollDeviceToken(deviceCode: DeviceCode, completion: @escaping (Bool, String?) -> Void) {
         isDevicePolling = true
         currentDeviceCode = deviceCode   // v6.4.3：供手动立即检查

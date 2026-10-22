@@ -27,6 +27,11 @@ struct RootView: View {
     @State private var importResult: String?
     // v4.3.44：QuickLook 分享中间层状态（侧载环境分享面板安全路径）
     @ObservedObject private var shareCenter = ShareCenter.shared
+    // v6.9.11：侧滑删除——记录当前滑开的会话 id 与位移（同一时间只允许一行滑开）。
+    // 会话列表用 ScrollView+LazyVStack 而非 List（为去掉行间分隔线），
+    // List 的 .swipeActions 用不了，只能自己做手势。
+    @State private var swipedId: UUID?
+    @State private var swipeOffset: CGFloat = 0
 
     private static func onboardingNeeded() -> Bool {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -268,29 +273,8 @@ struct ConversationDrawerView: View {
         ScrollView {
             LazyVStack(spacing: 6) {
                 ForEach(filtered) { conv in
-                    Button(action: {
-                        store.select(conv.id)
-                        withAnimation { ui.drawerOpen = false }
-                    }) {
-                        conversationRow(conv)
-                            .background(
-                                Group {
-                                    if store.selectedId == conv.id {
-                                        LinearGradient(colors: [Color.blue.opacity(0.16), Color.blue.opacity(0.05)], startPoint: .leading, endPoint: .trailing)
-                                    } else {
-                                        Color.clear
-                                    }
-                                }
-                            )
-                            .cornerRadius(12)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .contextMenu {
-                        // iOS14 兼容：不用 Button(role:)
-                        Button(action: { deleteSingle(conv.id) }) {
-                            Label(L10n.t("drawer_delete"), systemImage: "trash")
-                        }
-                    }
+                    // v6.9.11：侧滑删除（自行实现——会话列表是 ScrollView+LazyVStack，非 List）
+                    swipableRow(conv)
                 }
             }
             .padding(.horizontal, 10)
@@ -300,6 +284,105 @@ struct ConversationDrawerView: View {
     private func deleteSingle(_ id: UUID) {
         guard let idx = store.conversations.firstIndex(where: { $0.id == id }) else { return }
         store.delete(at: IndexSet(integer: idx))
+        if swipedId == id { swipedId = nil; swipeOffset = 0 }
+    }
+
+    // MARK: - v6.9.11 侧滑删除行
+
+    /// 会话列表用的是 ScrollView+LazyVStack（为去掉 List 的分隔线），
+    /// `.swipeActions` 只对 List 生效，所以这里自己做左滑：
+    /// - 左滑超过阈值 → 停靠到露出删除按钮的位置
+    /// - 再左滑一点或点删除按钮 → 删除
+    /// - 右滑或点其他行 → 收回
+    /// 同一时刻只允许一行滑开（swipedId 全局唯一）。
+    private let swipeReveal: CGFloat = 76    // 删除按钮露出宽度
+    private let swipeCommit: CGFloat = 132   // 超过则直接触发删除
+
+    @ViewBuilder
+    private func swipableRow(_ conv: ChatConversation) -> some View {
+        let isOpen = swipedId == conv.id
+        let offset = isOpen ? swipeOffset : 0
+
+        ZStack(alignment: .trailing) {
+            // 底层：删除按钮
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) { deleteSingle(conv.id) }
+            } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: "trash.fill").font(.system(size: 15, weight: .semibold))
+                    Text(L10n.t("drawer_delete")).font(.system(size: 10))
+                }
+                .foregroundColor(.white)
+                .frame(width: swipeReveal)
+                .frame(maxHeight: .infinity)
+                .background(Color.red)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(PlainButtonStyle())
+            .opacity(offset < -8 ? 1 : 0)
+            .allowsHitTesting(offset < -8)
+
+            // 上层：会话行，可左右拖
+            Button(action: {
+                // 已滑开时点击先收回，不切换会话
+                if isOpen {
+                    withAnimation(.easeOut(duration: 0.2)) { swipedId = nil; swipeOffset = 0 }
+                } else {
+                    store.select(conv.id)
+                    withAnimation { ui.drawerOpen = false }
+                }
+            }) {
+                conversationRow(conv)
+                    .background(
+                        Group {
+                            if store.selectedId == conv.id {
+                                LinearGradient(colors: [Color.blue.opacity(0.16), Color.blue.opacity(0.05)], startPoint: .leading, endPoint: .trailing)
+                            } else {
+                                Color(.systemBackground)
+                            }
+                        }
+                    )
+                    .cornerRadius(12)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .offset(x: offset)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 12, coordinateSpace: .local)
+                    .onChanged { value in
+                        // 只响应水平拖，且左滑为主；右滑用于收回已滑开的行
+                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                        let base: CGFloat = isOpen ? -swipeReveal : 0
+                        // 越界阻尼：最多滑到 swipeCommit*1.3
+                        var t = base + value.translation.width
+                        t = min(0, max(t, -swipeCommit * 1.3))
+                        swipedId = conv.id
+                        swipeOffset = t
+                    }
+                    .onEnded { value in
+                        let final = swipeOffset
+                        if final < -swipeCommit {
+                            withAnimation(.easeOut(duration: 0.18)) { deleteSingle(conv.id) }
+                        } else if final < -swipeReveal * 0.5 {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                                swipedId = conv.id
+                                swipeOffset = -swipeReveal
+                            }
+                        } else {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                swipedId = nil
+                                swipeOffset = 0
+                            }
+                        }
+                    }
+            )
+            .contextMenu {
+                // iOS14 兼容：不用 Button(role:)
+                Button(action: { deleteSingle(conv.id) }) {
+                    Label(L10n.t("drawer_delete"), systemImage: "trash")
+                }
+            }
+        }
+        .clipped()
     }
 
     private func conversationRow(_ conv: ChatConversation) -> some View {
