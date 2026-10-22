@@ -559,12 +559,9 @@ struct ChatView: View {
                 QuickTabButton(icon: "bolt", label: "技能") {
                     AppUIState.shared.quickSkillsPresented = true
                 }.frame(height: 36)
-                QuickTabButton(icon: "doc.text", label: "指令") {
-                    // v4.4.16：点"指令"→ 打开设置并真正跳到系统指令页(此前只打开设置,未定位到 SystemPromptsView, 用户实测'没真正跳到')
-                    AppUIState.shared.settingsJumpToModels = false
-                    AppUIState.shared.settingsJumpToSystemPrompts = true
-                    AppUIState.shared.settingsPresented = true
-                }.frame(height: 36)
+                // v6.9.10：删除"指令"胶囊入口——模式已由 AI 自动路由，无需手动选择。
+                // 仅移除入口，SystemPromptsView / 7 个模式的提示词内容全部保留。
+                // 恢复方法：从 git 历史取回本段（提交 c4787e5 之前的版本）。
                 QuickTabButton(icon: "folder", label: "工作区") {
                     AppUIState.shared.quickFilesPresented = true
                 }.frame(height: 36)

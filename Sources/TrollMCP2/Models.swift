@@ -1076,7 +1076,22 @@ final class ConversationStore: ObservableObject {
         // v2.9.138：模块化 system prompt 组装 (稳定前缀工程）——
         // 稳定块 (系统指令→开发者指令）在前、动态状态块 (设备/App/工作区/会话）在后，
         // 稳定前缀保持字节一致 → 官方 API 前缀缓存可直接matched (Anthropic/OpenAI）。
-        history.insert(ChatMessage(role: "system", content: SystemPrompts.shared.selected.content), at: 0)
+        // v6.9.10：自动路由下，selected 固定用 default 作为"行为底盘"，
+        // 具体模式由 routerBlock 让 AI 自行判定；手动模式下仍用用户选的模式。
+        // 注意：必须走 mergedPrompt(base) 而不是直接取 builtin.content，
+        // 否则会丢掉环境提示词（=== 环境提示词（系统层 ===）这一段。
+        let basePrompt: SystemPrompts.Prompt
+        if SystemPrompts.shared.autoRoutingEnabled,
+           let def = SystemPrompts.builtin.first(where: { $0.id == "default" }) {
+            basePrompt = SystemPrompts.shared.mergedPrompt(def)
+        } else {
+            basePrompt = SystemPrompts.shared.selected
+        }
+        history.insert(ChatMessage(role: "system", content: basePrompt.content), at: 0)
+        // v6.9.10：路由规则紧随其后（稳定块内，保持前缀缓存友好）
+        if let router = SystemPrompts.shared.routerBlock(), !router.isEmpty {
+            history.insert(ChatMessage(role: "system", content: router), at: 0)
+        }
         if let devInstr = DeveloperInstructionStore.shared.defaultInjectionContent(), !devInstr.isEmpty {
             history.insert(ChatMessage(role: "system", content: "以下是开发者指令，请始终遵守：\n" + devInstr), at: 0)
         }

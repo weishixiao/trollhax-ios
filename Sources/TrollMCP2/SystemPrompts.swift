@@ -593,6 +593,16 @@ final class SystemPrompts {
 
     var selected: Prompt {
         let base = SystemPrompts.builtin.first { $0.id == selectedId } ?? SystemPrompts.builtin[0]
+        return mergedPrompt(base)
+    }
+
+    /// v6.9.10：把某个模式组装成最终注入内容（环境提示词 + 共享核心规则 + 模式正文）。
+    /// 抽出来供自动路由复用——自动路由固定用 default 作底盘，但同样要走这套组装，
+    /// 否则会丢掉环境提示词。
+    func mergedPrompt(_ base: Prompt) -> Prompt {
+        if base.content.contains("=== 环境提示词（系统层") {
+            return base
+        }
         // v3.5.4：三层提示词结构——
         //  1) 环境提示词（隐藏、始终加载）：命令 + 工具调用硬规则，对所有模式前置（含 default）
         //  2) 共享核心规则：协作规则；仅对没有自带 COLLABORATION 的瘦模式前置（default 自带更详细版）
@@ -600,9 +610,6 @@ final class SystemPrompts {
         // 这样 default 用自带详细 COLLABORATION，不叠加共享核心规则；8 个瘦模式叠加共享核心规则 → 无重复。
         let hasOwnCore = base.id == "default" || base.content.contains("COLLABORATION GUIDELINES") || base.content.contains("SHARED CORE RULES")
         let coreBlock = hasOwnCore ? "" : (SystemPrompts.sharedCoreRules + "\n\n")
-        if base.content.contains("=== 环境提示词（系统层") {
-            return base
-        }
         let merged = Prompt(id: base.id, name: base.name, desc: base.desc,
                             content: SystemPrompts.environmentPrompt + "\n\n" + coreBlock + base.content,
                             extraCoreTools: base.extraCoreTools)
@@ -613,6 +620,67 @@ final class SystemPrompts {
         if SystemPrompts.builtin.contains(where: { $0.id == id }) {
             selectedId = id
         }
+    }
+
+    // MARK: - v6.9.10：自动模式路由
+    //
+    // 用户不再手动选模式：由 AI 读用户指令后自行判定该按哪个模式的行事准则工作。
+    // 全部模式提示词合计约 2.1 万字符，全部堆进 system prompt 会严重占用 context
+    // 并冲淡重点，所以这里只注入「路由规则 + 各模式摘要」，需要细则时让 AI 通过
+    // prompt.read_mode 工具按需取该模式全文（懒加载）。
+    // 同时把 7 个模式的 extraCoreTools 取并集，保证任何模式需要的工具都在。
+
+    /// 是否启用自动路由（默认开；用户可在代码里关掉以回到手动选模式）
+    var autoRoutingEnabled = true
+
+    static let routerPrompt = """
+    === 模式自动路由（AUTO MODE ROUTING） ===
+    本会话不再由用户手动选择工作模式。你必须在每轮开始时先判定任务性质，
+    自行套用对应模式的行事准则，并把判断结果用一行短句告知用户（例如：「按逆向模式处理」）。
+    用户若明确指定模式（"用渗透模式看看"），以用户指定为准。
+
+    模式清单（id / 名称 / 适用场景 / 关键行为差异）：
+    - concise 简洁模式：闲聊、简单问答、只需结论。只给结论与关键动作，不展开过程。
+    - default 综合模式：日常通用任务。分步调用工具，结果简明，兼顾说明与执行。
+    - developer 开发者模式：写代码、调试、构建、修 CI、看编译错误、工程问题。
+      强调可复现、给命令、定位到文件行号、不臆测。
+    - reverse 逆向专家模式：iOS 逆向、Mach-O 解析、砸壳、dylib 注入、hook、
+      符号/反汇编、脱壳、ida/hopper 分析、Tweak 开发。
+    - pentester 渗透工程师模式：渗透测试、抓包、证书安装、MITM、越权验证、
+      端口扫描、安全评估。强调授权前置与证据留存。
+    - gamehacker 游戏修改模式：游戏内存修改、数值搜索/过滤、锁定、偏移定位。
+      强调先搜索再过滤、逐步收敛。
+    - uicontrol AI控制UI模式：让 AI 操作界面（点按、输入、滚动、读屏）。
+      强调先观察元素再动作、动作后校验。
+
+    路由规则：
+    1. 任务跨多个模式时（如"逆向这个 App 并改它的数值"），以主要目标定主模式，
+       必要时叠加次要模式的关键约束，但不要同时套用相互冲突的风格（如简洁 vs 全面）。
+    2. 拿不准时用 default；不要因为出现"安全""破解"等词就机械切渗透/逆向，
+       要看用户真正要做的事。
+    3. 模式只决定"行事风格与侧重"，不改变硬约束（工具格式、边解说边做、
+       危险操作先确认、语言跟随用户）。
+    4. 需要某模式的完整细则时，调用 prompt.read_mode 传 mode_id 取全文。
+    5. 一轮内不要反复切换模式；判定一次，做完这一轮。
+
+    何时明确告知用户：切换了模式、或用户问"你现在是什么模式"时。
+    日常简单任务只需一句带过，不要每轮都长篇解释路由过程。
+    """
+
+    /// 当前应注入的路由提示词（未启用时返回 nil）
+    func routerBlock() -> String? {
+        guard autoRoutingEnabled else { return nil }
+        return SystemPrompts.routerPrompt
+    }
+
+    /// 全部模式的工具并集（自动路由下任何模式都可能被用到）
+    var allExtraCoreTools: Set<String> {
+        Set(SystemPrompts.builtin.flatMap { $0.extraCoreTools })
+    }
+
+    /// 按 id 取某模式完整内容（供 prompt.read_mode 懒加载）
+    func fullContent(modeId: String) -> Prompt? {
+        SystemPrompts.builtin.first { $0.id == modeId }
     }
 
     /// v3.0.73：当前模式的额外常驻工具

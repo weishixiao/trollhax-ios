@@ -478,6 +478,11 @@ public final class ToolRegistry: ObservableObject {
     /// v3.0.73：根据当前系统指令模式智能叠加常驻工具
     public func isCore(_ name: String) -> Bool {
         if Self.coreToolNames.contains(name) { return true }
+        // v6.9.10：自动路由下任何模式都可能被选中，取全部模式工具的并集，
+        // 避免 AI 判定为某模式后却发现其核心工具未加载。
+        if SystemPrompts.shared.autoRoutingEnabled {
+            return SystemPrompts.shared.allExtraCoreTools.contains(name)
+        }
         // 叠加当前模式的额外常驻工具
         let extra = SystemPrompts.shared.currentExtraCoreTools
         return extra.contains(name)
@@ -1442,7 +1447,48 @@ public final class ToolRegistry: ObservableObject {
         register(GitHubExecTool())
         // v3.7.7c: 移除 ish.bind 注册——bind mount 已由 autoBind 全自动（命令引用 iOS 路径自动挂载+改写），
         // 手动 bind 工具对 AI 是误导（会以为要手动挂载）。类定义保留供开发者调试/真机验证。
+        // v6.9.10：模式自动路由——AI 按需拉取某个模式的完整细则（懒加载，避免 2.1 万字符全量进 context）
+        register(PromptModeTool())
         AuditLog.shared.log("core", detail: "已注册 \(definitions.count) 个工具")
+    }
+}
+
+// MARK: - v6.9.10 模式细则读取（自动路由配套）
+
+/// AI 在自动路由下判定出任务性质后，用本工具拉取对应模式的完整行为准则。
+/// 系统提示词里只放了各模式摘要（约 1.5k 字符），全文按需取，避免占用 context。
+final class PromptModeTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "prompt.read_mode",
+        summary: "Read the full behavior rules of a work mode. Use for: after you decide which mode a task needs (see AUTO MODE ROUTING in system prompt), fetch that mode's complete rules before doing non-trivial work. Don't use for: listing modes (the summary list is already in the system prompt). Example: user asks to decrypt an app → read_mode reverse → follow its full checklist.",
+        parameters: [
+            "mode_id": "Mode id (required): concise / default / developer / reverse / pentester / gamehacker / uicontrol",
+            "list": "true = list all modes with description only, ignore mode_id"
+        ],
+    verified: true, category: "misc")
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        if params["list"] as? Bool == true {
+            return ["modes": SystemPrompts.builtin.map {
+                ["id": $0.id, "name": $0.name, "desc": $0.desc]
+            }]
+        }
+        guard let modeId = params["mode_id"] as? String, !modeId.isEmpty else {
+            throw MCPError.invalidParams("mode_id required (or pass list:true). Available: "
+                + SystemPrompts.builtin.map { $0.id }.joined(separator: " / "))
+        }
+        guard let p = SystemPrompts.shared.fullContent(modeId: modeId) else {
+            return ["error": "unknown mode: \(modeId)",
+                    "available": SystemPrompts.builtin.map { $0.id }]
+        }
+        return [
+            "mode_id": p.id,
+            "name": p.name,
+            "desc": p.desc,
+            "rules": p.content,
+            "extra_core_tools": p.extraCoreTools,
+            "note": "这些是该模式完整的角色准则；硬约束（工具格式/边解说边做/危险操作确认/语言）始终优先。"
+        ]
     }
 }
 
