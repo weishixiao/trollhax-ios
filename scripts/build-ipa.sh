@@ -303,23 +303,27 @@ if [ -n "$XCF_DIR" ]; then
             if [ -f "$APP/bin/python3" ]; then
                 chmod +x "$APP/bin/python3"
                 echo ">>> native python3 CLI built ($(du -h "$APP/bin/python3" | cut -f1))"
-                # fix3cg: python3 是本脚本内后生成的——前面的 bin 签名循环(≈123-150 行)展开时它还不存在，
-                # 未签 no-sandbox entitlements → iOS 沙箱按每次 exec 的二进制签名计算 → 真机 spawn 套普通沙箱
-                # → 启动即被 SIGKILL(137)。编译成功后必须补签一次 no-sandbox（动态/静态两条路径都覆盖）。
-                if [ -f "Support/bin-entitlements.plist" ]; then
-                    if command -v ldid >/dev/null 2>&1; then
-                        ldid -S"Support/bin-entitlements.plist" "$APP/bin/python3" 2>/dev/null \
-                            && echo ">>> python3 re-signed no-sandbox (ldid)" \
-                            || echo "!!! python3 ldid re-sign failed" >&2
-                    elif command -v codesign >/dev/null 2>&1; then
-                        codesign -s - -f --entitlements "Support/bin-entitlements.plist" "$APP/bin/python3" 2>/dev/null \
-                            && echo ">>> python3 re-signed no-sandbox (codesign)" \
-                            || echo "!!! python3 codesign re-sign failed" >&2
-                    else
-                        echo "!!! no sign tool for python3 — stays sandboxed" >&2
-                    fi
+                # v6.9.8：普通 ad-hoc 签名，不用 bin-entitlements.plist。
+                #
+                # fix3cg 曾在此补签 bin-entitlements.plist（含 platform-application /
+                # no-sandbox 等平台级权限），但那是错误方向：本文件上方 PRIV_TOOLS 的注释
+                # 已经写明「这些权限装到 TrollStore 后会被其证书重签，权限与被签身份不匹配
+                # → AMFI 直接拒执行，表现为 posix_spawn failed: Bad executable」，
+                # 实测 python3/node/lua/bsdtar 全部如此。两处逻辑冲突，导致 python3
+                # 恒 spawn 失败（真机日志 stderr="posix_spawn failed: Bad executable"）。
+                #
+                # python3 只读 $APP/python（stdlib）与 $APP/Frameworks（libPython），
+                # 都在自己的 App 容器内，常规沙箱本就允许，不需要任何平台权限。
+                if command -v ldid >/dev/null 2>&1; then
+                    ldid -S "$APP/bin/python3" 2>/dev/null \
+                        && echo ">>> python3 ad-hoc signed (ldid, no entitlements)" \
+                        || echo "!!! python3 ldid sign failed" >&2
+                elif command -v codesign >/dev/null 2>&1; then
+                    codesign -s - -f "$APP/bin/python3" 2>/dev/null \
+                        && echo ">>> python3 ad-hoc signed (codesign, no entitlements)" \
+                        || echo "!!! python3 codesign sign failed" >&2
                 else
-                    echo "!!! bin-entitlements.plist missing — python3 stays sandboxed" >&2
+                    echo "!!! no sign tool for python3" >&2
                 fi
             fi
         else
@@ -365,6 +369,35 @@ for d in "$APP"/tweaks/*.dylib; do
         echo "!!! sign failed: $d"
     fi
 done
+
+# v6.9.8：Frameworks/ 下的 framework 与 dylib 必须 ad-hoc 签名。
+# 真机实测：$APP/Frameworks/Python.framework/Python 未签名时，链接它的 bin/python3
+# 报 posix_spawn failed: Bad executable（dyld 拒绝加载未签名 CD）。
+# 只签 Mach-O（framework 根二进制、*.dylib），跳过资源文件。
+if [ -d "$APP/Frameworks" ]; then
+    find "$APP/Frameworks" -type f \( -name "*.dylib" -o -path "*/*.framework/*" \) 2>/dev/null | while read -r f; do
+        # framework 内只签与 .framework 同名的根二进制
+        case "$f" in
+            *.framework/*)
+                fw="$(echo "$f" | sed -n 's#^\(.*\.framework\)/.*#\1#p')"
+                [ -n "$fw" ] && [ "$f" != "$fw/$(basename "$fw" .framework)" ] && continue
+                ;;
+        esac
+        # 只处理真正的 Mach-O（文件头魔数判断，避免对 plist/资源签出垃圾）
+        magic=$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+        case "$magic" in
+            feedface|feedfacf|cefaedfe|cffaedfe|cafebabe|bebafeca) ;;
+            *) continue ;;
+        esac
+        if command -v ldid >/dev/null 2>&1 && ldid -S "$f" >/dev/null 2>&1; then
+            echo ">>> ldid signed $f"
+        elif codesign -s - -f "$f" >/dev/null 2>&1; then
+            echo ">>> codesign adhoc signed $f"
+        else
+            echo "!!! sign failed: $f"
+        fi
+    done
+fi
 
 # v3.0.37: iSH 引擎资源——alpine-rootfs.zip（首次启动解压）+ VDSO + RootfsPatch
 if [ -f "ish-stage/resources/alpine-rootfs.zip" ]; then
