@@ -10,7 +10,6 @@ struct AuditLogView: View {
     @State private var sortOrder: SortOrder = .newest
     @State private var sortBy: SortBy = .time
     // v6.0.28：崩溃日志tab（v6.6.8 应本机工具审计界面要求加回）
-    @State private var crashPaths: [String] = []
     // v4.3.43：Alert 按钮里不再直接 present 分享页（Alert dismiss 转场中 present 会崩溃），
     // 改为先记录待分享路径，等 Alert 完全消失后再由 onChange 触发。
     @State private var pendingSharePath: String?
@@ -55,15 +54,19 @@ struct AuditLogView: View {
         .navigationTitle(L10n.t("page_audit"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Button(action: exportLog) { Label(L10n.t("btn_export"), systemImage: "square.and.arrow.up") }
-                Button(L10n.t("btn_clear")) {
-                    if tab == 0 { log.clear() }
-                    else if tab == 2 { loadFileLog() }
+            // v6.9.9：崩溃 Tab 用自己的 toolbar（CrashLogView 内已有复制/分享/清空），
+            // 这里不再叠加调用记录的导出/清空，避免按钮语义打架。
+            if tab != 3 {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button(action: exportLog) { Label(L10n.t("btn_export"), systemImage: "square.and.arrow.up") }
+                    Button(L10n.t("btn_clear")) {
+                        if tab == 0 { log.clear() }
+                        else if tab == 2 { loadFileLog() }
+                    }
                 }
             }
         }
-        .onAppear { loadFileLog(); crashPaths = CrashCatcher.list() }
+        .onAppear { loadFileLog() }
         .alert(isPresented: $showExportAlert) {
             // v4.3.43：Alert 按钮只记录待分享路径，等 Alert dismiss 完成后
             // 由 onChange(showExportAlert) 触发分享——避免在 Alert dismiss 转场中
@@ -94,30 +97,11 @@ struct AuditLogView: View {
 
     // v6.0.28：崩溃日志tab（v6.6.8 加回——本机工具审计界面应展示崩溃现场）
     private var crashLogView: some View {
-        List {
-            if crashPaths.isEmpty {
-                Section {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.shield")
-                            .foregroundColor(.green)
-                        Text("没有崩溃记录")
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 20)
-                }
-            } else {
-                ForEach(crashPaths, id: \.self) { path in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text((path as NSString).lastPathComponent)
-                            .font(.body)
-                        Text(CrashCatcher.preview(path, maxChars: 100))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                    }
-                }
-            }
-        }
+        // v6.9.9：直接复用 CrashLogView（CrashCatcher.swift）。
+        // 旧实现在这里重写了一份简陋列表：不能点开、没有导出，与
+        // CrashLogView 里已有的"点开详情 + 单条复制/分享"完全脱节，
+        // 用户在设置里看到的正是这份残缺版本。
+        CrashLogView()
     }
 
     // MARK: 排序栏
