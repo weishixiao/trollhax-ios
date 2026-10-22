@@ -731,7 +731,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Support/Info.plist 2>/dev/null || echo "unknown")
+          # v6.6.7：优先用 build-ipa.sh 注入的 RELEASE_VERSION——Support/Info.plist 是仓库里的
+          # 默认值（6.6.6），直接读它会让 Release 标题永远停在旧版本，与实际产物不一致。
+          VER="${RELEASE_VERSION:-$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Support/Info.plist 2>/dev/null || echo "unknown")}"
           echo "version=$VER"
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           # v6.6.7：只上传 TrollHax.tipa（Bundle ID 已改 com.trollhax.app，老用户需卸载重装）
