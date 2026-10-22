@@ -172,6 +172,16 @@ enum DecryptEngine {
     /// 不再笼统报"镜像表未找到"
     static func findImageLoadAddressDiag(task: UInt32, pid: Int32, binaryPath: String) -> (UInt64?, String?) {
         var lastDiag: String? = nil
+        // v6.9.6：分级早退（参考 TrollDecrypt 的有限重试）。
+        // 旧实现三种失败都无差别 continue，3000×10ms 跑满 30 秒才报错。但它们的性质不同：
+        //   - task_info 持续返回同一 kr → 端口/环境层面就不支持（典型 rootHide 下 tfpid 不通），
+        //     等下去不会有任何变化，白等 30 秒；
+        //   - all_image_info_addr=0 / infoArrayCount=0 → dyld 尚未初始化，稍等确实会好；
+        //   - 表里有条目但路径不匹配 → 主镜像可能还没 map 进去，也值得等。
+        // 因此只对「同一个 task_info 错误」做早退，其余保持原有重试窗口。
+        var lastTaskInfoKr: Int32 = 0
+        var sameKrStreak = 0
+        let sameKrGiveUp = 50      // 50×10ms = 0.5s，同一个 kr 连续出现即判定环境不支持
         for _ in 0..<MAX_DYLD_RETRIES {
             // ★v2.9.222 根因★：iOS 的 TASK_DYLD_INFO=25 (macOS 才是 2）！
             // flavor=2 在 iOS 是 TASK_EVENTS_INFO (事件计数，8×natural_t，count=8）
@@ -210,6 +220,17 @@ enum DecryptEngine {
             }
             guard kr == 0, dyldInfoAddr != 0 else {
                 lastDiag = (kr != 0) ? "task_info kr=\(kr)" : "all_image_info_addr=0"
+                // v6.9.6：只有"task_info 本身失败"才累计早退；addr=0 是 dyld 未就绪，继续等
+                if kr != 0 {
+                    if kr == lastTaskInfoKr { sameKrStreak += 1 } else { lastTaskInfoKr = kr; sameKrStreak = 1 }
+                    if sameKrStreak >= sameKrGiveUp {
+                        lastDiag = "task_info kr=\(kr) 连续 \(sameKrStreak) 次不变，判定为环境不支持该调用（非 App 未启动）。"
+                            + Self.taskPortHint(kr)
+                        return (nil, lastDiag)
+                    }
+                } else {
+                    sameKrStreak = 0
+                }
                 Thread.sleep(forTimeInterval: 0.01); continue
             }
             guard let infosData = vmRead(task: task, address: dyldInfoAddr,
@@ -261,6 +282,18 @@ enum DecryptEngine {
     }
 
     /// 路径规范化：去掉 /private 前缀差异 (TrollDecrypt 同款处理）
+    /// v6.9.6：把 task_info 的 kern_return 翻成可操作建议。
+    /// 这几种错误在 rootHide/rootless 环境下几乎都会出现，且都**不是**"App 还没启动"。
+    static func taskPortHint(_ kr: Int32) -> String {
+        switch kr {
+        case 4:  return "KERN_INVALID_ARGUMENT：task 端口无效，多半是 task_for_pid 拿到的是死端口（目标已退出或 tfpid 不通）"
+        case 5:  return "KERN_FAILURE：内核拒绝读取该端口，检查签名是否含 task_for_pid-allow / com.apple.system-task-ports"
+        case 2:  return "KERN_PROTECTION_FAILURE：无权限读取目标 task，运行 device.probe 确认 tfpid 状态"
+        case 1:  return "KERN_INVALID_ADDRESS"
+        default: return "先用 device.probe 确认 tfpid/entitlements 状态，再判断是环境问题还是目标问题"
+        }
+    }
+
     private static func canonicalPath(_ p: String) -> String {
         if p.hasPrefix("/private/") { return String(p.dropFirst("/private".count)) }
         return p

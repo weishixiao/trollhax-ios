@@ -238,6 +238,18 @@ final class InjectionManager {
         if geteuid() == 0, let native = nativeFileOp(name, args) {
             return native
         }
+        // v6.9.4：只读命令直接执行，不经过提权。
+        //
+        // `ldid -e <bin>` 只是读签名里的 entitlements blob——普通用户就能读，
+        // 不需要 root。但它此前被塞进 runAsRoot，spawnRoot 在 rootHide 下返回 85
+        // → app entitlements 永远失败（用户实测连续 26 次报 ldid -e failed (85)）。
+        //
+        // 判定：ldid 的 -e / -e 组合属于纯读；写操作（-S 签名）才需要提权。
+        if name == "ldid", args.contains("-e"), !args.contains("-S") {
+            let direct = spawn(bin, args: args, timeout: timeout)
+            if direct.0 == 0 { return direct }
+            // 直跑失败再走提权（某些环境 ldid 需要签名权限才能读加密段）
+        }
         // v6.9.3：文件操作类**优先直写**（对齐 TrollFools）。
         //
         // TrollFools 全程用 FileManager 直接写 App Bundle，没有任何提权逻辑——

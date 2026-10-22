@@ -37,6 +37,9 @@ static void hud_diag(const char *msg)
 double g_hud_size = 150.0;
 // v6.0.7：悬浮角色（girl=小萝莉 / rabit=兔娘 / cat=猫娘），由主 App 启动时 -char 传入，默认 girl
 const char *g_hud_char = "girl";
+// v6.9.6：网速显示开关，由主 App 启动时 -speed 1 传入，默认关闭
+// （参考 TrollSpeed 的网速 HUD；采样实现在 SpeedMonitor.mm）
+BOOL g_hud_speed = NO;
 
 int main(int argc, char *argv[])
 {
@@ -55,6 +58,10 @@ int main(int argc, char *argv[])
                 if (strcmp(argv[i + 1], "rabit") == 0) g_hud_char = "rabit";
                 else if (strcmp(argv[i + 1], "cat") == 0) g_hud_char = "cat";   // v6.0.11：新增猫娘
                 else g_hud_char = "girl";
+            }
+            else if (argv[i] && strcmp(argv[i], "-speed") == 0 && i + 1 < argc)
+            {
+                g_hud_speed = (atoi(argv[i + 1]) != 0);
             }
         }
 

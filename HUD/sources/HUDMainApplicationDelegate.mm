@@ -9,6 +9,9 @@
 
 #import "HUDMainApplicationDelegate.h"
 #import "HUDMainWindow.h"
+// v6.9.6：网速显示层（参考 TrollSpeed）
+#import "SpeedHUDView.h"
+extern BOOL g_hud_speed;
 #import "HUDRootViewController.h"
 
 #import "SBSAccessibilityWindowHostingController.h"
@@ -41,6 +44,15 @@
     [self.window setWindowLevel:10000010.0];
     [self.window setHidden:NO];
     [self.window makeKeyAndVisible];
+
+    // v6.9.6：网速 HUD——独立小标签，贴在安全区顶部居中，不拦截触摸。
+    // 由主 App 的 -speed 1 开启；关闭时完全不创建，零开销。
+    if (g_hud_speed) {
+        THSpeedHUDView *speed = [THSpeedHUDView sharedIfEnabled];
+        [speed layoutInWindow:self.window];
+        [self.window addSubview:speed];
+        [speed start];
+    }
 
     _windowHostingController = [[objc_getClass("SBSAccessibilityWindowHostingController") alloc] init];
     unsigned int _contextId = [self.window _contextId];

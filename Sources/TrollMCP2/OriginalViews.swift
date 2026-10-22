@@ -193,6 +193,10 @@ struct ConversationTranscriptView: View {
             .listStyle(.insetGrouped)
             .toolbar {
                 if !messages.isEmpty {
+                    // v6.9.7：副标题一直写着"导出"，但根本没有导出入口。
+                    // 走 ShareCenter 自建菜单——本设备侧载环境下 UIActivityViewController /
+                    // ShareLink 会崩，项目统一用 SharePresenter 绕开 ShareSheet。
+                    SharePresenter.toolbarShare(text: Self.markdownTranscript(messages))
                     Button(L10n.t("btn_clear")) { store.clearCurrent() }
                 }
             }
@@ -207,6 +211,26 @@ struct ConversationTranscriptView: View {
         f.dateFormat = "MM-dd HH:mm"
         return f
     }()
+
+    /// v6.9.7：把当前会话导出为 Markdown。
+    /// 角色用 `## 我` / `## 助手`，时间放行尾，便于直接粘进笔记/文档。
+    static func markdownTranscript(_ messages: [ChatMessage]) -> String {
+        var out = "# 会话记录\n\n"
+        out += "导出时间：" + ISO8601DateFormatter().string(from: Date()) + "\n"
+        out += "消息数：\(messages.count)\n\n---\n\n"
+        for msg in messages {
+            let who: String
+            switch msg.role {
+            case "user": who = "我"
+            case "assistant": who = "助手"
+            default: who = "系统"
+            }
+            out += "## \(who)\n\n"
+            out += msg.content
+            out += "\n\n*\(tf.string(from: msg.timestamp))*\n\n---\n\n"
+        }
+        return out
+    }
 }
 
 // MARK: - 助手角色配置（原版 AssistantProfilesView）

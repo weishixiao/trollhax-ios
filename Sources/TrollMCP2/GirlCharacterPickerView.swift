@@ -200,6 +200,25 @@ struct GirlCharacterPickerView: View {
                         .foregroundColor(.secondary)
                 }
             }
+            Section(header: Text("网速显示（改完自动重启悬浮生效）")) {
+                Toggle(isOn: $companion.showSpeed) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("显示实时网速")
+                        Text("在悬浮窗顶部显示 ↓下载 / ↑上传 速率")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .onChange(of: companion.showSpeed) { _ in
+                    // v6.9.6：与尺寸/气泡样式一致——桌宠开着就立即重启生效，关着只存参数
+                    if HUDManager.shared.isRunning {
+                        _ = HUDManager.shared.stop()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            _ = HUDManager.shared.start()
+                        }
+                    }
+                }
+            }
             Section(header: Text("气泡样式（改完自动重启悬浮生效）")) {
                 Picker("气泡样式", selection: $companion.bubbleStyle) {
                     Text("经典圆角").tag(0)

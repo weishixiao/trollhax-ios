@@ -60,14 +60,21 @@ final class DiagnoseStartupTool: MCPTool {
         }
 
         // 4. 检查签名
-        let ldidPath = InjectionManager.shared.binaryPath("ldid") ?? ""
-        if !ldidPath.isEmpty {
-            let (_, entOutput) = InjectionManager.shared.spawnRoot(ldidPath, args: ["-e", binaryPath])
-            diagnosis["signed"] = !entOutput.isEmpty
-            if entOutput.isEmpty {
-                causes.append("二进制未签名")
-                fixes.append("用 ldid 重新签名或用 TrollStore 重装")
+        // v6.9.5：直接读 LC_CODE_SIGNATURE，不 spawn ldid（rootHide 下 spawnRoot 恒返回 85，
+        // 旧实现会把空输出误判成"二进制未签名"）
+        if let staticEnts = AppEntitlementsTool.entitlementsViaMachO(path: binaryPath) {
+            let count = staticEnts["count"] as? Int ?? 0
+            diagnosis["signed"] = true
+            diagnosis["entitlements_count"] = count
+            diagnosis["signed_source"] = "machokit"
+            if count == 0 {
+                causes.append("有签名但 entitlements 为空（ad-hoc 签名或被剥离）")
+                fixes.append("判断是否需要 task_for_pid-allow：ad-hoc 签名需用 ldid -S<plist> 重签")
             }
+        } else {
+            diagnosis["signed"] = false
+            causes.append("二进制无 LC_CODE_SIGNATURE（未签名或被剥离）")
+            fixes.append("用 ldid 重新签名或用 TrollStore 重装")
         }
 
         // 5. 检查注入状态和备份

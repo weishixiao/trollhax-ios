@@ -139,10 +139,10 @@ final class AppDiagnoseTool: MCPTool {
         checks["encrypted"] = encrypted
 
         // 3) 签名状态
+        // v6.9.5：静态读签名，不 spawn ldid（rootHide 下 ldid 恒 85，会误判"无签名"）
         var signed: Bool? = nil
-        if let ldid = InjectionManager.shared.binaryPath("ldid") {
-            let out = InjectionManager.shared.spawnRootDetailed(ldid, args: ["-e", binaryPath], timeout: 30).stdout
-            signed = !out.isEmpty
+        if FileManager.default.fileExists(atPath: binaryPath) {
+            signed = (AppEntitlementsTool.entitlementsViaMachO(path: binaryPath) != nil)
         }
         checks["signed"] = signed
 

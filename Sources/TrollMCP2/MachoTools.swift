@@ -79,7 +79,7 @@ final class MachoExecTool: MCPTool {
 
     // MARK: - 文件加载
 
-    private static func openMachO(path: String) throws -> MachOFile {
+    static func openMachO(path: String) throws -> MachOFile {
         let url = URL(fileURLWithPath: path)
         var target = url
 
@@ -202,7 +202,8 @@ final class MachoExecTool: MCPTool {
 
     // MARK: - entitlements
 
-    private static func entitlements(_ file: MachOFile) throws -> [String: Any] {
+    /// v6.9.4：改为 internal——app entitlements 在 ldid 不可用时降级复用此实现
+    static func entitlements(_ file: MachOFile) throws -> [String: Any] {
         guard let cs = file.codeSign else {
             return [
                 "ok": false,
