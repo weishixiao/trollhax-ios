@@ -27,11 +27,6 @@ struct RootView: View {
     @State private var importResult: String?
     // v4.3.44：QuickLook 分享中间层状态（侧载环境分享面板安全路径）
     @ObservedObject private var shareCenter = ShareCenter.shared
-    // v6.9.11：侧滑删除——记录当前滑开的会话 id 与位移（同一时间只允许一行滑开）。
-    // 会话列表用 ScrollView+LazyVStack 而非 List（为去掉行间分隔线），
-    // List 的 .swipeActions 用不了，只能自己做手势。
-    @State private var swipedId: UUID?
-    @State private var swipeOffset: CGFloat = 0
 
     private static func onboardingNeeded() -> Bool {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -162,6 +157,13 @@ struct ConversationDrawerView: View {
     @ObservedObject private var ui = AppUIState.shared
     @ObservedObject private var probe = DeviceProbe.shared
     @State private var searchText = ""
+    // v6.9.11：侧滑删除——记录当前滑开的会话 id 与位移（同一时间只允许一行滑开）。
+    // 会话列表用 ScrollView+LazyVStack 而非 List（为去掉行间分隔线），
+    // List 的 .swipeActions 用不了，只能自己做手势。
+    // 注意：这些状态必须在 ConversationDrawerView 内——会话列表属于本视图，
+    // 放到 RootView 里会 cannot find in scope。
+    @State private var swipedId: UUID?
+    @State private var swipeOffset: CGFloat = 0
     // v2.9.166：deviceReady 改为计算属性直接读 DeviceProbe.shared.lastReport——
     // 旧版 @State 只在 onAppear 读一次：用户点开检测页跑完（全绿）返回后，
     // 左下角仍是旧感叹号，这就是"环境通过了还显示感叹号"的根因。
