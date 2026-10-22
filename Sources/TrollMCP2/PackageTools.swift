@@ -11,7 +11,7 @@ import ZIPFoundation
 final class PackageTool: MCPTool {
     let definition = ToolDefinition(
         name: "package",
-        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz/lzma; Apple LZMA only .lzma-alone); ipa=zip(stored/deflate). NOT supported: xz container & zstd/bzip2 data.tar → tell user unpack on PC with 7-Zip/bsdtar. Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
+        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz/lzma/xz/bz2/zstd, decoded by bundled python3); ipa=zip(stored/deflate). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
         parameters: [
             "command": "inspect / unpack",
             "path": "absolute path to .deb or .ipa",
@@ -116,12 +116,13 @@ final class PackageTool: MCPTool {
                 ShellDiag.log("package inspectDeb member: \(name) size=\(size)")
                 if name.hasPrefix("data.tar") {
                     dataTarName = name
-                    // v3.6.19g: xz container 无法解析(Apple LZMA 仅 .lzma-alone)，标注提示，避免 data_file_count=0 误导
-                    if content.count >= 6 && content[0..<6].elementsEqual([0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) {
-                        dataCompressionNote = "data.tar 为 xz container —— iOS Apple LZMA 仅支持 .lzma-alone，无法解析文件列表；请在电脑端用 7-Zip/bsdtar 解包"
-                        ShellDiag.log("package inspectDeb: data.tar=\(name) xz container — 无法解析，提示用户电脑端处理")
+                    // v6.6.8: xz/lzma/bz2/zstd 已由内置原生 python3 解码，不再跳过；
+                    // 只有真正解不出来时才标注提示，避免 data_file_count=0 误导。
+                    dataFileList = tarFileList(content) ?? []
+                    if dataFileList.isEmpty {
+                        dataCompressionNote = "data.tar 无法解析文件列表（压缩格式不支持或数据损坏）；可在电脑端用 7-Zip/bsdtar 解包"
+                        ShellDiag.log("package inspectDeb: data.tar=\(name) 解析失败 —— 提示用户电脑端处理")
                     } else {
-                        dataFileList = tarFileList(content) ?? []
                         ShellDiag.log("package inspectDeb data.tar=\(name) files=\(dataFileList.count)")
                     }
                 }
@@ -268,6 +269,8 @@ final class PackageTool: MCPTool {
 
     /// List file paths inside a possibly-compressed tar (data.tar.gz/.xz/.lzma/plain).
     private func tarFileList(_ raw: Data) -> [String]? {
+        // v6.6.8：压缩成员用原生 python3 流式列清单，避免把整包解压进内存
+        if let kind = compressionKind(raw) { return NativeTar.list(raw, kind: kind) }
         guard let tar = decompressTar(raw) else { return nil }
         return parseTar(tar).map { $0.name }
     }
@@ -280,15 +283,26 @@ final class PackageTool: MCPTool {
         return nil
     }
 
+    /// 压缩类型判定（按魔数）。返回 nil 表示不是已知压缩，调用方按裸 tar 处理。
+    /// 注意：魔数一律用 [UInt8] 字面量——字符串转 UTF-8 会把 0xB5 编成两字节（C2 B5），
+    /// 旧代码用 "\u{B5}" 比较 zstd 魔数因此永远不匹配。
+    private func compressionKind(_ raw: Data) -> String? {
+        if raw.count >= 6 && raw[0..<6].elementsEqual([0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) { return "xz" }
+        if raw.count >= 3 && raw[0] == 0x42 && raw[1] == 0x5A && raw[2] == 0x68 { return "bz2" }   // "BZh"
+        if raw.count >= 4 && raw[0..<4].elementsEqual([0x28, 0xB5, 0x2F, 0xFD]) { return "zstd" }
+        // .lzma-alone：13 字节头，第 0 字节是 lc/lp/pb 属性（deb 工具链默认 0x5D）
+        if raw.count >= 14, raw[0] == 0x5D, raw[1] == 0x00, raw[2] == 0x00 { return "lzma" }
+        return nil
+    }
+
     private func decompressTar(_ raw: Data) -> Data? {
         // detect by magic
         if raw.count >= 2 && raw[0] == 0x1F && raw[1] == 0x8B { return gunzip(raw) }       // gzip
-        // xz container magic \xFD7zXZ\x00：Apple COMPRESSION_LZMA 只支持 .lzma-alone(13字节头)，不支持 xz 容器，
-        // 直接喂 decodeLZMA 必失败(实测解不出)。v3.6.19g 改为明确不支持，调用方(extractTar/inspectDeb)给出清晰提示。
-        if raw.count >= 6 && raw[0..<6].elementsEqual([0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) { return nil }
-        if raw.count >= 3 && raw[0] == 0x5D && raw[1] == 0x00 && raw[2] == 0x00 { return lzmaAloneDecode(raw) }   // .lzma
-        if raw.count >= 4 && raw[0..<4].elementsEqual(Array("28 BZ".utf8)) { return nil } // bzip2 unsupported
-        if raw.count >= 4 && raw[0..<4].elementsEqual(Array("\u{28}\u{B5}\u{2F}\u{FD}".utf8)) { return nil } // zstd
+        // v6.6.8：xz / lzma-alone / bz2 / zstd 一律交给内置原生 python3 的 _lzma/_bz2/_zstd。
+        // 根因：Apple Compression 的 COMPRESSION_LZMA 官方只支持「XZ 容器里的 LZMA2」，
+        // 解不了 deb 最常见的 .lzma-alone（13 字节头）——compression_decode_buffer 恒返回 0，
+        // 旧实现于是每次都报 "cannot decompress data.tar"（真机实测，数据为 0x5D 68MB 字典）。
+        if let kind = compressionKind(raw), let d = NativeTar.decompress(raw, kind: kind) { return d }
         if raw.count >= 512 { return raw } // plain tar
         return nil
     }
@@ -330,40 +344,9 @@ final class PackageTool: MCPTool {
         }
     }
 
-    /// 用 compression_decode_buffer 单次解压（LZMA/xz），容量不足时倍增重试。
-    /// 绕开 compression_stream 结构体构造的 Swift 兼容坑 (CI 实测 2026-09-24）。
-    private func decodeLZMA(_ data: Data, skipHeader: Int) -> Data? {
-        return data.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Data? in
-            guard skipHeader < data.count, let base = src.baseAddress else { return nil }
-            let srcPtr = base.advanced(by: skipHeader).bindMemory(to: UInt8.self, capacity: data.count - skipHeader)
-            let srcLen = data.count - skipHeader
-            let scratchSize = compression_decode_scratch_buffer_size(COMPRESSION_LZMA)
-            // v3.6.19e: 防崩溃——scratch 大小为 0/异常时直接返回 nil，避免空 scratch 传给压缩 API
-            guard scratchSize > 0, scratchSize < (1 << 20) else { return nil }
-            var scratch = [UInt8](repeating: 0, count: scratchSize)
-            var capacity = max(64 * 1024, srcLen * 4)
-            while capacity < 512 * 1024 * 1024 {
-                var dst = [UInt8](repeating: 0, count: capacity)
-                let n = dst.withUnsafeMutableBytes { (dstRaw: UnsafeMutableRawBufferPointer) -> Int in
-                    compression_decode_buffer(dstRaw.bindMemory(to: UInt8.self).baseAddress!, capacity,
-                                              srcPtr, srcLen,
-                                              &scratch, COMPRESSION_LZMA)
-                }
-                if n > 0 {
-                    return Data(dst[0..<n])
-                }
-                // 容量不够时（0 返回且数据非空）翻倍重试；容量过大仍失败则放弃，防 capacity 溢出
-                if capacity >= (512 * 1024 * 1024) / 2 { return nil }
-                capacity *= 2
-            }
-            return nil
-        }
-    }
-
-    private func lzmaAloneDecode(_ data: Data) -> Data? {
-        // .lzma alone: 13-byte header then LZMA stream
-        return decodeLZMA(data, skipHeader: 13)
-    }
+    /// v6.6.8：xz / lzma-alone / bz2 / zstd 的兼容解码已移到 NativeTar（内置原生 python3）。
+    /// Apple 的 COMPRESSION_LZMA 只支持 XZ 容器中的 LZMA2，无法解 .lzma-alone，
+    /// 旧 decodeLZMA 对 deb 的 data.tar.lzma 恒失败，已删除。
 
     private func parseTar(_ data: Data) -> [(name: String, data: Data)] {
         var out: [(String, Data)] = []
@@ -430,27 +413,22 @@ final class PackageTool: MCPTool {
 
     /// Extract a (possibly compressed) tar into dest, path-traversal safe. Returns file count.
     private func extractTar(_ raw: Data, into destURL: URL) throws -> Int {
+        let fm = FileManager.default
+        try fm.createDirectory(at: destURL, withIntermediateDirectories: true)
+
+        // v6.6.8：xz/lzma/bz2/zstd 直接由原生 python3 流式解到目标目录。
+        // 好处：不必把整个解压后的 tar 读进内存（deb 常见 10MB→100MB+），
+        // tarfile 的 filter='data' 同时承担了路径穿越防护。
+        if let kind = compressionKind(raw) {
+            if let n = NativeTar.extract(raw, kind: kind, into: destURL) { return n }
+            throw MCPError.classified("package: cannot decompress data.tar (\(kind)) — 内置原生 python3 不可用或压缩数据损坏",
+                                      code: "UNSUPPORTED_COMPRESSION", reason: "format",
+                                      nextStep: "确认 App 内置 python3 可执行（App/bin/python3）；或在电脑端用 7-Zip / bsdtar 解包")
+        }
+
         guard let tar = decompressTar(raw) else {
-            // v3.6.19g: xz container 明确报错(Apple LZMA 仅 .lzma-alone)，避免静默解不出
-            if raw.count >= 6 && raw[0..<6].elementsEqual([0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) {
-                throw MCPError.classified("package: data.tar uses xz container — iOS Apple LZMA only supports .lzma-alone, xz not supported. unpack on PC with 7-Zip / bsdtar",
-                                          code: "UNSUPPORTED_COMPRESSION", reason: "format",
-                                          nextStep: "unpack on PC with 7-Zip / bsdtar, or re-pack data.tar as gzip")
-            }
-            // detect zstd/bz2 to give a precise message
-            if raw.count >= 4 && raw[0..<4].elementsEqual(Array("\u{28}\u{B5}\u{2F}\u{FD}".utf8)) {
-                throw MCPError.classified("package: data.tar uses zstd compression — not supported on iOS yet",
-                                          code: "UNSUPPORTED_COMPRESSION", reason: "format",
-                                          nextStep: "unpack on PC with 7-Zip / bsdtar, or ask to add zstd support")
-            }
-            if raw.count >= 4 && raw[0..<4].elementsEqual(Array("28 BZ".utf8)) {
-                throw MCPError.classified("package: data.tar uses bzip2 — not supported on iOS",
-                                          code: "UNSUPPORTED_COMPRESSION", reason: "format",
-                                          nextStep: "unpack on PC with 7-Zip")
-            }
             throw MCPError.failed("package: cannot decompress data.tar")
         }
-        let fm = FileManager.default
         var count = 0
         for (name, content) in parseTar(tar) {
             let clean = name.trimmingCharacters(in: CharacterSet(charactersIn: "./"))
@@ -462,5 +440,104 @@ final class PackageTool: MCPTool {
             count += 1
         }
         return count
+    }
+}
+
+/// v6.6.8：deb 的 data.tar 常用 .lzma-alone / .xz / .bz2 / .zstd。
+/// Apple Compression 只覆盖 gzip 与「XZ 里的 LZMA2」，其余一律解不了；
+/// App 内置原生 CPython 的 _lzma / _bz2 / _zstd 是静态链接的完整实现，
+/// 因此压缩成员统一交给它——落临时文件后由 python3 解压（或流式解到目录）。
+private enum NativeTar {
+    /// 内置原生 python3；未集成 Python 的构建返回 nil。
+    static func python3() -> String? {
+        let p = Bundle.main.bundlePath + "/bin/python3"
+        return FileManager.default.isExecutableFile(atPath: p) ? p : nil
+    }
+
+    /// python 侧脚本：mode=cat 解压到文件；mode=extract 直接流式解 tar 到目录。
+    private static let script = """
+    import sys, os, bz2, lzma, shutil, tarfile
+    mode, kind, src, dst = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+    def opener(path):
+        if kind == 'xz':
+            return lzma.open(path, 'rb', format=lzma.FORMAT_XZ)
+        if kind == 'lzma':
+            return lzma.open(path, 'rb', format=lzma.FORMAT_ALONE)
+        if kind == 'bz2':
+            return bz2.open(path, 'rb')
+        from compression import zstd
+        return zstd.open(path, 'rb')
+
+    if mode == 'cat':
+        with opener(src) as f, open(dst, 'wb') as o:
+            shutil.copyfileobj(f, o, 1 << 20)
+        print('OK', os.path.getsize(dst))
+    elif mode == 'list':
+        with opener(src) as f, open(dst, 'w') as o, tarfile.open(fileobj=f, mode='r|') as t:
+            for m in t:
+                if m.isfile():
+                    o.write(m.name + '\\n')
+        print('OK')
+    else:
+        n = 0
+        os.makedirs(dst, exist_ok=True)
+        with opener(src) as f, tarfile.open(fileobj=f, mode='r|') as t:
+            for m in t:
+                if not m.isfile():
+                    continue
+                t.extract(m, dst, filter='data')
+                n += 1
+        print('OK', n)
+    """
+
+    private static func run(_ raw: Data, kind: String, mode: String, dstPath: String) -> Int32? {
+        guard let py = python3() else { return nil }
+        let srcPath = NSTemporaryDirectory() + "/pkg_\(UUID().uuidString).in"
+        defer { try? FileManager.default.removeItem(atPath: srcPath) }
+        guard (try? raw.write(to: URL(fileURLWithPath: srcPath))) != nil else { return nil }
+        let res = BuildRunner.shared.run(executable: py,
+                                        args: ["-c", script, mode, kind, srcPath, dstPath],
+                                        env: ["PYTHONIOENCODING": "utf-8"],
+                                        timeout: 300)
+        if res.timedOut { return nil }
+        return res.exitCode
+    }
+
+    /// 解压到内存（control.tar 与文件清单用，体积小）。
+    static func decompress(_ raw: Data, kind: String) -> Data? {
+        let outPath = NSTemporaryDirectory() + "/pkg_\(UUID().uuidString).out"
+        defer { try? FileManager.default.removeItem(atPath: outPath) }
+        guard (run(raw, kind: kind, mode: "cat", dstPath: outPath) ?? -1) == 0 else { return nil }
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: outPath),
+              let size = attrs[.size] as? Int, size > 0, size <= 512 * 1024 * 1024 else { return nil }
+        return try? Data(contentsOf: URL(fileURLWithPath: outPath))
+    }
+
+    /// 列出压缩 tar 里的常规文件路径（流式，不把解压结果读进内存）。
+    static func list(_ raw: Data, kind: String) -> [String]? {
+        let outPath = NSTemporaryDirectory() + "/pkg_\(UUID().uuidString).lst"
+        defer { try? FileManager.default.removeItem(atPath: outPath) }
+        guard (run(raw, kind: kind, mode: "list", dstPath: outPath) ?? -1) == 0 else { return nil }
+        guard let text = try? String(contentsOfFile: outPath, encoding: .utf8) else { return nil }
+        return text.split(separator: "\n").map(String.init)
+    }
+
+    /// 流式解压 tar 到目录，返回写入的常规文件数；失败返回 nil。
+    static func extract(_ raw: Data, kind: String, into dest: URL) -> Int? {
+        guard !dest.path.isEmpty else { return nil }
+        guard (run(raw, kind: kind, mode: "extract", dstPath: dest.path) ?? -1) == 0 else { return nil }
+        // 只统计常规文件（目录不计），用于回填 extracted_count
+        var files = 0
+        if let en = FileManager.default.enumerator(atPath: dest.path) {
+            for case let rel as String in en {
+                var isDir: ObjCBool = false
+                let full = dest.appendingPathComponent(rel).path
+                if FileManager.default.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue {
+                    files += 1
+                }
+            }
+        }
+        return files
     }
 }
