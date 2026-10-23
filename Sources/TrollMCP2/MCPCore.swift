@@ -1246,6 +1246,7 @@ public final class ToolRegistry: ObservableObject {
         // v3.1.40: 删旧的 4 个 device.* 工具 (已合并到 device 大工具）
         register(MemoryTweakTool())   // v6.7.0：H5GG式内存修改（默认原生 VansonMod 引擎，可切 legacy dylib）
         register(MachoExecTool())     // v6.8.0：Mach-O 静态分析（MachOKit）
+        register(DisasmTool())        // v6.6.15：进程内反汇编（capstone），不依赖子进程
         // v3.1.34: control 大工具 + 子命令 (合并 10 个 control.* 工具）
         register(ControlExecTool())
         // v3.1.34: 删旧的 10 个 control.* 工具 (已合并到 control 大工具）

@@ -115,6 +115,22 @@ let package = Package(
                 .define("XZ_USE_CRC64")
             ]
         ),
+        // v6.6.15：CCapstone——进程内反汇编（capstone 5.0.3，BSD-3）。
+        // 越狱会拒绝执行 App 内的第三方二进制（posix_spawn → ENOSYS 85），
+        // r2/cstool 起不来；把 capstone 静态库链进主二进制后反汇编不再依赖子进程。
+        // 静态库来自 CI 的 native-tools 产物（native-tools-out/libcapstone.a）。
+        .target(
+            name: "CCapstone",
+            path: "CCapstone",
+            publicHeadersPath: "public",
+            cSettings: [
+                .headerSearchPath("vendor")
+            ],
+            linkerSettings: [
+                .unsafeFlags(["-L", "native-tools-out"]),
+                .linkedLibrary("capstone")
+            ]
+        ),
         // v3.3.0：VPN 抓包模式 appex（PacketTunnelProvider，P1 hev 转发内核）
         .executableTarget(
             name: "VpnTunnel",
@@ -136,6 +152,7 @@ let package = Package(
                 "CMitm",
                 "CLaunch",
                 "CLZMA",
+                "CCapstone",
                 // v6.7.0：VansonMod 内存引擎（GPL-3.0）——memory 工具的原生扫描/读写/冻结实现
                 "VansonEngine"
             ],
