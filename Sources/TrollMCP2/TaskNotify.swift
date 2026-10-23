@@ -36,7 +36,12 @@ final class TaskNotify {
     }
 
     /// 开始后台任务（切后台后尽量延长执行，系统上限约 30 秒）
+    /// v6.6.17：引用计数——多会话并发时，一个会话结束不能把另一个会话的
+    /// 后台保活一起关掉（旧实现是布尔语义，谁最后结束谁停，先结束的会误杀）。
+    private var bgRefCount = 0
+
     func beginBackground() {
+        bgRefCount += 1
         guard bgTask == .invalid else { return }
         bgTask = UIApplication.shared.beginBackgroundTask { [weak self] in
             self?.endBackground()
@@ -44,6 +49,8 @@ final class TaskNotify {
     }
 
     func endBackground() {
+        bgRefCount = max(0, bgRefCount - 1)
+        guard bgRefCount == 0 else { return }
         guard bgTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(bgTask)
         bgTask = .invalid

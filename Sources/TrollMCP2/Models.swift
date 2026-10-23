@@ -778,7 +778,15 @@ final class ConversationStore: ObservableObject {
 
     private let key = "trollmcp2.conversations"
 
-    init() { load() }
+    /// v6.6.17：后台 worker——为"一个会话在跑时，另一个会话也能同时跑"而生。
+    /// worker 持有独立的一套运行状态（isLoading/currentClient/流式缓冲/计数器），
+    /// 因此两个会话互不干扰；它不读也不写共享存储，结果由 BackgroundRunManager 合并回主实例。
+    let isBackgroundWorker: Bool
+
+    init(background: Bool = false) {
+        isBackgroundWorker = background
+        if !background { load() }
+    }
 
     var selectedIndex: Int? {
         conversations.firstIndex { $0.id == selectedId }
@@ -874,6 +882,19 @@ final class ConversationStore: ObservableObject {
         activeConvId = nil
     }
 
+    /// v6.6.17：把后台 worker 跑完的会话合并回主实例（整体替换 messages/title）。
+    /// 冲突策略：以后台结果为准——它在启动时拿的是快照，期间用户在 B 里手改会被覆盖；
+    /// 这是"后台跑任务"的正常取舍，UI 上后台会话只展示最终结果。
+    func mergeBackgroundResult(_ conv: ChatConversation) {
+        guard !isBackgroundWorker else { return }
+        if let i = conversations.firstIndex(where: { $0.id == conv.id }) {
+            var c = conv
+            c.updatedAt = Date()
+            conversations[i] = c
+        }
+        sortAndSave()
+    }
+
     func clearCurrent() {
         guard let idx = selectedIndex else { return }
         var conv = conversations[idx]
@@ -893,7 +914,25 @@ final class ConversationStore: ObservableObject {
     }
 
     func send(_ text: String, using config: ModelConfig, imageDataURLs: [String]? = nil,
-              reasoningLevel: Int = 0, smartSearch: Bool = true) {
+              reasoningLevel: Int = 0, smartSearch: Bool = true,
+              appendUserMessage: Bool = true) {
+        // v6.6.17：会话级并发——本实例正在跑 A，用户切到 B 又发消息时，
+        // 把 B 交给独立的后台 worker（它有自己的整套运行状态），
+        // 这里只负责把用户消息落到 B 的 UI 上，然后在完成时合并结果。
+        if !isBackgroundWorker, isLoading,
+           let running = activeConvId ?? requestSessionId,
+           running != selectedId,
+           let idx = selectedIndex {
+            var queued = ChatMessage(role: "user", content: text)
+            if let imgs = imageDataURLs, !imgs.isEmpty { queued.imageDataURLs = imgs }
+            conversations[idx].messages.append(queued)
+            conversations[idx].updatedAt = Date()
+            let snapshot = conversations[idx]
+            sortAndSave()
+            BackgroundRunManager.shared.start(conversation: snapshot, config: config,
+                                              reasoningLevel: reasoningLevel, smartSearch: smartSearch)
+            return
+        }
         // v2.9.97：记住最近使用的模型，顶栏/下次启动立即恢复
         ModelStore.shared.markUsed(config.id.uuidString)
         refineInFlight = false
@@ -927,7 +966,7 @@ final class ConversationStore: ObservableObject {
         if let imgs = imageDataURLs, !imgs.isEmpty {
             msg.imageDataURLs = imgs
         }
-        appendToCurrent(msg)
+        if appendUserMessage { appendToCurrent(msg) }
         isLoading = true
 
         // v3.1.66：全量加载所有工具 (tool_search 已删除，不再渐进式披露）
@@ -1948,6 +1987,8 @@ final class ConversationStore: ObservableObject {
     private let saveQueue = DispatchQueue(label: "trollmcp2.conversations.save", qos: .utility)
 
     private func save() {
+        // 后台 worker 的 conversations 只有一份临时副本，写盘会把真实历史覆盖掉
+        guard !isBackgroundWorker else { return }
         let snapshot = conversations
         let dir = storeDir
         let path = storeFile

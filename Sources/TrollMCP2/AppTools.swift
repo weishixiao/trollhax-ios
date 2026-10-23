@@ -330,7 +330,11 @@ final class BackgroundKeepAlive {
     private var engine: AVAudioEngine?
     private(set) var running = false
 
+    /// v6.6.17：引用计数（同 TaskNotify）——并发会话各自持有，最后一个结束才真停。
+    private var refCount = 0
+
     func start() {
+        refCount += 1
         guard !running else { return }
         do {
             let session = AVAudioSession.sharedInstance()
@@ -359,6 +363,8 @@ final class BackgroundKeepAlive {
     }
 
     func stop() {
+        refCount = max(0, refCount - 1)
+        guard refCount == 0 else { return }
         guard running else { return }
         engine?.stop()
         engine = nil
