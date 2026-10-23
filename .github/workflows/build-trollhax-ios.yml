@@ -733,6 +733,9 @@ jobs:
       # v4.3.30：发布滚动 Release（固定 tag "latest"）——多源更新用：
       # App 下载链第二候选（GitHub 被墙时经 ghfast/gh-proxy 等镜像前缀即可下载）。
       - name: Publish rolling release (multi-source update)
+        # v6.6.17：只在 main 上发布。分支验证（workflow_dispatch 指定 ref）不能覆盖 latest，
+        # 否则实验代码会被当成"最新版"推给所有人。
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
