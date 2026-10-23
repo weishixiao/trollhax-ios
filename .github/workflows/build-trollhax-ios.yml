@@ -411,6 +411,11 @@ jobs:
     # v4.4.6-fix3u: needs native-nmap（continue-on-error job，失败不阻塞出包）
     # v4.4.8-fix3w: needs native-llvm（LLVM 单工具 + jtool2；下载 continue-on-error，失败不出这些工具但出包）
     needs: [native-tools, native-python, native-wheels, native-nmap, native-llvm]
+    # v6.6.16：只有 native-tools 是硬依赖（bsdtar + libcapstone.a，后者现在被主二进制链接）。
+    # python/wheels/nmap/llvm 都属于"有则更好"：它们的下载步骤都是 continue-on-error，
+    # 但默认 needs 语义会让任一失败把 build 直接 skip——实测 native-wheels 的 artifact
+    # 下载因账号 egress 限流失败，整个出包就没了。这里改成只校验 native-tools。
+    if: always() && needs.native-tools.result == 'success'
     runs-on: macos-latest
     env:
       RELEASE_VERSION: 6.6.16
