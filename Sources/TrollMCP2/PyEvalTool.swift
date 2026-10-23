@@ -78,16 +78,22 @@ final class PyEvalTool: MCPTool {
         let id = UUID().uuidString
         let codePath = tmp + "/pycode_\(id).py"
         let outPath = tmp + "/pyout_\(id).txt"
+        let envPath = tmp + "/pyenv_\(id).json"
         defer {
             try? FileManager.default.removeItem(atPath: codePath)
             try? FileManager.default.removeItem(atPath: outPath)
+            try? FileManager.default.removeItem(atPath: envPath)
         }
         try code.write(toFile: codePath, atomically: true, encoding: .utf8)
+        // v6.6.19：用户环境变量注入 os.environ
+        try? EnvVars.pythonEnvJSON().write(toFile: envPath, atomically: true, encoding: .utf8)
 
         var err = [CChar](repeating: 0, count: 1024)
         let rc = codePath.withCString { cp in
             outPath.withCString { op in
-                pyx_run_file(cp, op, &err, err.count)
+                envPath.withCString { ep in
+                    pyx_run_file(cp, op, ep, &err, err.count)
+                }
             }
         }
         let out = (try? String(contentsOfFile: outPath, encoding: .utf8)) ?? ""

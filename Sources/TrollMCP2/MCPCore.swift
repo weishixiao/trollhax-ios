@@ -1248,6 +1248,7 @@ public final class ToolRegistry: ObservableObject {
         register(MachoExecTool())     // v6.8.0：Mach-O 静态分析（MachOKit）
         register(DisasmTool())        // v6.6.15：进程内反汇编（capstone），不依赖子进程
         register(PyEvalTool())        // v6.6.16：进程内 CPython（dlopen），不依赖子进程
+        register(EnvTool())           // v6.6.19：环境变量（AI 可读写，设置页也可编辑）
         // v3.1.34: control 大工具 + 子命令 (合并 10 个 control.* 工具）
         register(ControlExecTool())
         // v3.1.34: 删旧的 10 个 control.* 工具 (已合并到 control 大工具）

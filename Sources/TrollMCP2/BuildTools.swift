@@ -90,7 +90,9 @@ final class BuildRunner {
         defer { for p in argv where p != nil { free(p) } }
 
         // 环境：继承当前 + 覆盖
+        // v6.6.19：用户环境变量作为默认值，显式传入的 env 优先
         var mergedEnv = ProcessInfo.processInfo.environment
+        for (k, v) in EnvVars.current() { mergedEnv[k] = v }
         for (k, v) in env { mergedEnv[k] = v }
         if mergedEnv["PATH"] == nil { mergedEnv["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin" }
         if mergedEnv["HOME"] == nil { mergedEnv["HOME"] = "/var/mobile" }

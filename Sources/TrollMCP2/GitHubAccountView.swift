@@ -301,6 +301,10 @@ struct AddGitHubAccountView: View {
                 // v6.9.7：任何关闭路径（完成按钮/下滑手势/授权成功）都复位状态，
                 // 否则下次点"打开授权页"因 showSafari 已 true 而无反应。
                 safariURL = nil
+                // v6.6.19：用户从授权页返回 = 大概率刚点完 Authorize。
+                // 旧实现只关页面不校验，得等下一次轮询（最长 interval 5s，
+                // 网络抖动时还会一直静默重试）——体感就是"登录后永远回不来"。
+                if store.isDevicePolling { store.checkNow() }
             }) {
                 if let url = safariURL {
                     // v6.9.11：去掉 .ignoresSafeArea()——它会把 SFSafariViewController
@@ -393,6 +397,17 @@ struct AddGitHubAccountView: View {
                     }
                     if let st = store.deviceFlowState, !st.isEmpty, st.contains("失败") || st.contains("确认") {
                         Text(st).font(.caption).foregroundColor(.orange)
+                    }
+                    // v6.6.19：把最近一次真实错误显示出来。
+                    // 旧界面只在 deviceFlowState 含"失败/确认"时显示，而
+                    // finishLoginWith 失败（如 api.github.com 被墙、HTTP 403）
+                    // 只写 lastError，用户看到的就是"一直转圈、没有原因"。
+                    if let err = store.lastError, !err.isEmpty {
+                        Text(err).font(.caption).foregroundColor(.red)
+                    }
+                    if let err = store.lastError, err.contains("device_flow_disabled") || err.contains("incorrect_client_credentials") {
+                        Text("该 OAuth App 未开启 Device Flow。请在下方改用 Personal Access Token 登录。")
+                            .font(.caption).foregroundColor(.orange)
                     }
                     // v6.9.11：授权页关不掉时的逃生口——停止轮询并回到上一步
                     if store.isDevicePolling {

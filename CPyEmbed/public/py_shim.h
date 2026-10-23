@@ -27,7 +27,9 @@ int pyx_init(const char *frameworkPath, const char *home, const char *pythonPath
 int pyx_ready(void);
 
 /// 执行一个 .py 文件，stdout/stderr 写入 outPath（UTF-8）。
+/// envPath: 可选的环境变量 JSON 文件（{"KEY":"VALUE"}），执行前更新 os.environ；可为 NULL。
 /// 返回 0 成功（脚本可能自身抛错，错误已写进 outPath）；-1 解释器未就绪。
-int pyx_run_file(const char *codePath, const char *outPath, char *err, size_t errCap);
+int pyx_run_file(const char *codePath, const char *outPath, const char *envPath,
+                 char *err, size_t errCap);
 
 #endif

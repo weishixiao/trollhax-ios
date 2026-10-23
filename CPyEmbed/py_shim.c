@@ -79,17 +79,25 @@ int pyx_init(const char *frameworkPath, const char *home, const char *pythonPath
     return 0;
 }
 
-int pyx_run_file(const char *codePath, const char *outPath, char *err, size_t errCap)
+int pyx_run_file(const char *codePath, const char *outPath, const char *envPath,
+                 char *err, size_t errCap)
 {
     seterr(err, errCap, "");
     if (!pyx_ready()) { seterr(err, errCap, "解释器未初始化"); return -1; }
 
-    // 用文件路径传代码/输出，避免把用户代码拼进字符串字面量（转义地狱）。
-    char code[4096];
+    // 用文件路径传代码/环境/输出，避免把用户内容拼进字符串字面量（转义地狱）。
+    static char code[8192];
     snprintf(code, sizeof code,
-        "import sys, io, traceback\n"
+        "import sys, io, os, json, traceback\n"
         "_code_path = %c%s%c\n"
         "_out_path  = %c%s%c\n"
+        "_env_path  = %c%s%c\n"
+        "if _env_path:\n"
+        "    try:\n"
+        "        with open(_env_path, encoding='utf-8') as _ef:\n"
+        "            os.environ.update({str(k): str(v) for k, v in json.load(_ef).items()})\n"
+        "    except Exception:\n"
+        "        pass\n"
         "_buf = io.StringIO()\n"
         "_old = sys.stdout\n"
         "sys.stdout = _buf\n"
@@ -104,7 +112,7 @@ int pyx_run_file(const char *codePath, const char *outPath, char *err, size_t er
         "        open(_out_path, 'w', encoding='utf-8').write(_buf.getvalue())\n"
         "    except Exception:\n"
         "        pass\n",
-        '\'', codePath, '\'', '\'', outPath, '\'');
+        '\'', codePath, '\'', '\'', outPath, '\'', '\'', envPath ? envPath : "", '\'');
 
     int gil = g_gilEnsure();
     int rc = g_run(code);

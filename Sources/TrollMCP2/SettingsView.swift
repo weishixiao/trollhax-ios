@@ -160,6 +160,14 @@ struct SettingsView: View {
                          destination: AnyView(DownloadsView()))
         ]))
 
+        // 环境（v6.6.19：环境变量）
+        groups.append(SettingsGroup(header: "环境", items: [
+            SettingsItem(title: "环境变量",
+                         subtitle: "注入子进程与进程内 Python · \(EnvVars.current().count) 项",
+                         icon: "key.fill", color: .gray,
+                         destination: AnyView(EnvVarsView()))
+        ]))
+
         // 控制（远程控制/控制中心/操作宏 + 开发者模式开关）
         var controlItems: [SettingsItem] = [
             SettingsItem(title: L10n.t("row_remote"),

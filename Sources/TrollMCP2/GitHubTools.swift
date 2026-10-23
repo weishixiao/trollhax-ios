@@ -127,7 +127,9 @@ final class GitHubTriggerBuildTool: MCPTool {
         parameters: ["workflow": "Workflow file: build-trollhax-ios.yml (default, build IPA) or build-tweak.yml (build tweak dylib)", "tweak": "Only for tweak builds: tweak project name (e.g. CompileProbe / ProbeAgent)", "ref": "Git branch to build (default main)"], verified: true, category: "build")
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let token = GHConfig.activeToken else {
-            throw MCPError.failed("not logged in to GitHub, log in first in Settings - GitHub Account")
+            throw MCPError.classified("GitHub 未登录：请先到 设置 → GitHub 账号 完成登录（设备码或 Personal Access Token）。登录成功前不要重复调用本工具。",
+                                      code: "NOT_LOGGED_IN", reason: "environment",
+                                      nextStep: "先在设置里登录；未登录时重试同一个调用不会成功")
         }
         let owner = GHConfig.repoOwner
         let repo = GHConfig.repoName
@@ -155,7 +157,9 @@ final class GitHubFetchRunsTool: MCPTool {
         parameters: ["limit": "Max results (default 5)"], verified: true, category: "build")
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let token = GHConfig.activeToken else {
-            throw MCPError.failed("not logged in to GitHub")
+            throw MCPError.classified("GitHub 未登录：请先到 设置 → GitHub 账号 完成登录（设备码或 Personal Access Token）。登录成功前不要重复调用本工具。",
+                                      code: "NOT_LOGGED_IN", reason: "environment",
+                                      nextStep: "先在设置里登录；未登录时重试同一个调用不会成功")
         }
         let limit = params["limit"] as? Int ?? 5
         let owner = GHConfig.repoOwner
@@ -183,7 +187,9 @@ final class GitHubDownloadArtifactTool: MCPTool {
         parameters: ["run_id": "Specific run ID (optional, uses latest successful)", "artifact_name": "Artifact name (optional, auto-detects)"], verified: true, category: "build")
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let token = GHConfig.activeToken else {
-            throw MCPError.failed("not logged in to GitHub")
+            throw MCPError.classified("GitHub 未登录：请先到 设置 → GitHub 账号 完成登录（设备码或 Personal Access Token）。登录成功前不要重复调用本工具。",
+                                      code: "NOT_LOGGED_IN", reason: "environment",
+                                      nextStep: "先在设置里登录；未登录时重试同一个调用不会成功")
         }
         let owner = GHConfig.repoOwner
         let repo = GHConfig.repoName
