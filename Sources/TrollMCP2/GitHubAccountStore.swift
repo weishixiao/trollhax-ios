@@ -60,6 +60,10 @@ final class GitHubAccountStore: ObservableObject {
     @Published var deviceFlowState: String?   // 提示文案 (含 user_code）
     @Published var isDevicePolling = false
     private var pollTimer: DispatchSourceTimer?   // 持有强引用，防止局部变量被释放导致轮询停止
+    /// v6.6.20：GitHub 要求的最小轮询间隔（秒）。收到 slow_down 时按规范 +5s 并重排定时器。
+    private var pollInterval: TimeInterval = 5
+    /// v6.6.20：上一次换取 token 的时间——手动"立即检查"必须遵守间隔，否则必然 slow_down。
+    private var lastExchangeAt: Date = .distantPast
 
     private let accountsKey = "trollmcp2.github_accounts"
     private let activeKey = "trollmcp2.github_active"
@@ -78,7 +82,7 @@ final class GitHubAccountStore: ObservableObject {
     init() {
         let def = UserDefaults.standard
         repoOwner = def.string(forKey: ownerKey) ?? "zrrt"
-        repoName = def.string(forKey: repoKey) ?? "trollmcp2"
+        repoName = def.string(forKey: repoKey) ?? "trollhax-ios"
         workflowId = def.string(forKey: workflowKey) ?? "build-trollhax-ios.yml"
         branch = def.string(forKey: branchKey) ?? "main"
         // v2.9.117：空字符串也回退内置默认 (旧版删空保存会覆盖默认值，导致"未设置 Client ID"）
@@ -115,6 +119,12 @@ final class GitHubAccountStore: ObservableObject {
         if let old = def.string(forKey: workflowKey),
            old == "build-tweak" || old == "build-trollmcp2.yml" {
             workflowId = "build-trollhax-ios.yml"
+        }
+        // v6.6.20：仓库本体也改名了（trollmcp2 → trollhax-ios）。
+        // 只改 workflow 文件不够——trigger 会打到 repos/<owner>/trollmcp2/...，
+        // 结果就是"触发 failed (HTTP 403/404)"，而界面上看不出问题出在仓库名。
+        if def.string(forKey: repoKey) == "trollmcp2" {
+            repoName = "trollhax-ios"
         }
         if let data = UserDefaults.standard.data(forKey: accountsKey),
            let saved = try? JSONDecoder().decode([GitHubAccount].self, from: data) {
@@ -208,6 +218,15 @@ final class GitHubAccountStore: ObservableObject {
     /// ——实测痛点："已授权但 app 里无法返回授权请求"，因为轮询失败是静默重试、界面无反馈）。
     func checkNow() {
         guard let dc = currentDeviceCode else { return }
+        // v6.6.20：遵守 OAuth 规定的轮询间隔。
+        // 之前从授权页返回就立刻查一次，往往距上次轮询不足 interval → 必然 slow_down，
+        // 而 slow_down 又被当成"确认失败"显示，用户体感就是"怎么都登不上"。
+        let elapsed = Date().timeIntervalSince(lastExchangeAt)
+        let wait = pollInterval - elapsed
+        if wait > 0 {
+            deviceFlowState = "请等待 \(Int(wait.rounded(.up))) 秒后自动确认…"
+            return
+        }
         deviceFlowState = "正在确认授权结果…"
         exchangeDeviceToken(deviceCode: dc) { [weak self] token, error in
             guard let self = self else { return }
@@ -244,9 +263,10 @@ final class GitHubAccountStore: ObservableObject {
         deviceFlowState = "请在浏览器输入代码 \(deviceCode.user_code)，等待授权…"
 
         let deadline = Date().addingTimeInterval(Double(deviceCode.expires_in))
+        pollInterval = max(5, Double(deviceCode.interval))   // GitHub 规定最小 5s
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global())
         pollTimer = timer
-        timer.schedule(deadline: .now() + Double(deviceCode.interval), repeating: Double(deviceCode.interval))
+        timer.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
         timer.setEventHandler { [weak self] in
             guard let self = self else { timer.cancel(); return }
             if Date() > deadline {
@@ -271,8 +291,16 @@ final class GitHubAccountStore: ObservableObject {
                             completion(ok, msg)
                         }
                     }
+                } else if error == "slow_down" {
+                    // v6.6.20：OAuth 规范要求——收到 slow_down 时把间隔 +5s 再重试，
+                    // 而不是按原间隔继续打（旧实现照旧轮询，会一直被限流，永远拿不到 token）。
+                    self.pollInterval += 5
+                    timer.schedule(deadline: .now() + self.pollInterval, repeating: self.pollInterval)
+                    DispatchQueue.main.async {
+                        self.deviceFlowState = "GitHub 要求放慢轮询，已自动调整为每 \(Int(self.pollInterval)) 秒一次…"
+                    }
                 } else if let error = error {
-                    // v3.0.42：只有"终止性"错误才停轮询；网络错误/解析failed/authorization_pending/slow_down
+                    // v3.0.42：只有"终止性"错误才停轮询；网络错误/解析failed/authorization_pending
                     // 一律继续等下一次——之前网络错误会 cancel timer，移动网络一抖授权流程就死，卡"等待授权"。
                     // v6.4.1：把"配置类"错误也判终止（原来会一直转圈到超时，用户只看到"等待授权"）：
                     // incorrect_client_credentials / device_flow_disabled / unsupported_grant_type
@@ -299,6 +327,7 @@ final class GitHubAccountStore: ObservableObject {
     private func exchangeDeviceToken(deviceCode: DeviceCode,
                                      completion: @escaping (String?, String?) -> Void) {
         let cid = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastExchangeAt = Date()   // v6.6.20：供 checkNow 计算冷却
         var req = URLRequest(url: URL(string: "\(loginBase)/login/oauth/access_token")!, timeoutInterval: 20)
         setHTTPMethod("POST", on: &req)
         req.setValue("application/json", forHTTPHeaderField: "Accept")

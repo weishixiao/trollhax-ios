@@ -19,7 +19,7 @@ private enum GHStoreKeys {
 /// v4.3.66：由 private 改为 internal（InstallTools.swift 跨文件引用）
 struct GHConfig {
     static var repoOwner: String { UserDefaults.standard.string(forKey: GHStoreKeys.owner) ?? "zrrt" }
-    static var repoName: String { UserDefaults.standard.string(forKey: GHStoreKeys.repo) ?? "trollmcp2" }
+    static var repoName: String { UserDefaults.standard.string(forKey: GHStoreKeys.repo) ?? "trollhax-ios" }
     static var workflowId: String { UserDefaults.standard.string(forKey: GHStoreKeys.workflow) ?? "build-trollhax-ios.yml" }
     static var branch: String { UserDefaults.standard.string(forKey: GHStoreKeys.branch) ?? "main" }
     static var clientID: String { UserDefaults.standard.string(forKey: GHStoreKeys.clientID) ?? "Ov23li890n3hM15edlcw" }
@@ -145,7 +145,23 @@ final class GitHubTriggerBuildTool: MCPTool {
         if code == 204 {
             return ["triggered": true, "workflow": workflow, "ref": ref, "note": "triggered, wait a few seconds then check progress with github.fetch_runs"]
         }
-        return ["triggered": false, "http_status": code, "message": (json?["message"] as? String) ?? "trigger failed"]
+        // v6.6.20：403/404 分别归因——旧实现只回 "trigger failed (HTTP 403)"，
+        // 看着像登录问题，实际通常是 ①仓库名过期（trollmcp2 已改名）②Token 缺 workflow 权限。
+        let serverMsg = (json?["message"] as? String) ?? "trigger failed"
+        var hint = ""
+        switch code {
+        case 403:
+            hint = "403 通常是 Token 缺少 workflow 权限：网页登录（Device Flow）默认不带该 scope，"
+                 + "请改用 Personal Access Token 并勾选 repo + workflow；"
+                 + "若特权已给仍 403，检查下面显示的 owner/repo 是否还存在。"
+        case 404:
+            hint = "404 = 仓库或 workflow 文件不存在，检查 owner/repo/workflow 三项。"
+        default:
+            break
+        }
+        return ["triggered": false, "http_status": code, "message": serverMsg,
+                "target": "\(owner)/\(repo) · \(workflow) · \(ref)",
+                "hint": hint.isEmpty ? "可用诊断：github.account_status 查看账号与仓库配置" : hint]
     }
 }
 
