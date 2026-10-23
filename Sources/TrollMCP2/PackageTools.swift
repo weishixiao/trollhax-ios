@@ -12,7 +12,7 @@ import CLZMA
 final class PackageTool: MCPTool {
     let definition = ToolDefinition(
         name: "package",
-        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz/lzma/xz decoded in-process, bz2/zstd via bundled python3); ipa=zip(stored/deflate). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
+        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect / unpack / selftest (verify built-in decoders). Inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz/lzma/xz decoded in-process, bz2/zstd via bundled python3); ipa=zip(stored/deflate). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
         parameters: [
             "command": "inspect / unpack",
             "path": "absolute path to .deb or .ipa",
@@ -26,8 +26,10 @@ final class PackageTool: MCPTool {
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {
-            throw MCPError.invalidParams("package: missing command (inspect / unpack)")
+            throw MCPError.invalidParams("package: missing command (inspect / unpack / selftest)")
         }
+        // v6.6.12：自检不依赖任何文件，放在 path 校验之前
+        if command == "selftest" { return selfTest() }
         guard let path = params["path"] as? String, !path.isEmpty else {
             throw MCPError.invalidParams("package: missing path")
         }
@@ -190,6 +192,7 @@ final class PackageTool: MCPTool {
         var extracted = 0
         var list: [String] = []
         var format = "unknown"
+        var memberErrors: [String] = []
 
         if data.prefix(8).elementsEqual(Array("!<arch>\n".utf8)) {
             format = "deb"
@@ -226,13 +229,30 @@ final class PackageTool: MCPTool {
                 // 归一化 ar member 的 Data 索引；后续 decompressTar 会读取 raw[0...].
                 let content = safeSlice(data, contentStart..<contentEnd)
                 if name != "/" && name != "//" && !name.hasSuffix("/") {
-                    if name.hasPrefix("data.tar") {
-                        let n = try extractTar(content, into: destURL)
-                        extracted += n
-                        list.append(contentsOf: tarFileList(content) ?? [])
-                    } else if name.hasPrefix("control.tar") {
-                        let n = try extractTar(content, into: destURL.appendingPathComponent("_control"))
-                        extracted += n
+                    // v6.6.12：成员之间互相隔离——control.tar.gz 解不开不应该连带
+                    // data.tar 一起失败（真机上正是 control 坏了，却报成 data.tar）。
+                    do {
+                        if name.hasPrefix("data.tar") {
+                            let n = try extractTar(content, into: destURL, label: name)
+                            extracted += n
+                            list.append(contentsOf: tarFileList(content) ?? [])
+                        } else if name.hasPrefix("control.tar") {
+                            let n = try extractTar(content, into: destURL.appendingPathComponent("_control"), label: name)
+                            extracted += n
+                        }
+                    } catch {
+                        let msg: String
+                        if let e = error as? MCPError {
+                            switch e {
+                            case .classified(let m, _, _, _): msg = m
+                            case .failed(let m): msg = m
+                            case .invalidParams(let m): msg = m
+                            case .unknownTool(let m): msg = m
+                            }
+                        } else {
+                            msg = "\(error)"
+                        }
+                        memberErrors.append("\(name): \(msg)")
                     }
                 }
                 offset = contentEnd + padding
@@ -265,7 +285,10 @@ final class PackageTool: MCPTool {
             "dest": destURL.path,
             "extracted_count": extracted,
             "top_files_sample": Array(list.prefix(100)),
-            "next": "read inner files with artifact read"
+            "member_errors": memberErrors,
+            "next": memberErrors.isEmpty
+                ? "read inner files with artifact read"
+                : "部分成员解析失败（见 member_errors）；其余内容已解出，可直接用 artifact 读取"
         ]
     }
 
@@ -273,10 +296,15 @@ final class PackageTool: MCPTool {
 
     /// List file paths inside a possibly-compressed tar (data.tar.gz/.xz/.lzma/plain).
     private func tarFileList(_ raw: Data) -> [String]? {
-        // v6.6.8：压缩成员用原生 python3 流式列清单，避免把整包解压进内存
+        // v6.6.12：先走进程内解码——旧实现把压缩成员一律交给 python3，
+        // 而 python3 在这台设备上起不来，于是 data_file_count 永远是 0
+        // （inspect 看起来像"包坏了"，实际只是列表来源不可用）。
+        if let tar = decompressTar(raw) {
+            let names = parseTar(tar).map { $0.name }
+            if !names.isEmpty { return names }
+        }
         if let kind = compressionKind(raw) { return NativeTar.list(raw, kind: kind) }
-        guard let tar = decompressTar(raw) else { return nil }
-        return parseTar(tar).map { $0.name }
+        return nil
     }
 
     private func controlFromTar(_ raw: Data) -> String? {
@@ -366,35 +394,39 @@ final class PackageTool: MCPTool {
         return stored == unsigned || stored == signed
     }
 
+    /// gzip 解压。
+    ///
+    /// v6.6.12 修复：旧实现先跳过 10 字节 gzip 头，却用 `inflateInit2(31)`
+    /// （31 = 16+15，表示「输入自带 gzip 头」），于是 inflate 拿到的第一个字节
+    /// 不是 0x1f，必然 Z_DATA_ERROR —— 这段代码从来没解开过任何 gzip，
+    /// deb 的 control.tar.gz 一直失败（还被误报成 data.tar）。
+    /// 现在把完整数据交给 zlib，由它解析 header/FEXTRA/FNAME/FCOMMENT 与 CRC。
     private func gunzip(_ data: Data) -> Data? {
-        // skip 10-byte gzip header (+ optional extra fields)
-        var start = 10
-        if data.count > start + 2 && (data[start] & 0x04) != 0 { // FEXTRA
-            let xlen = Int(data[start + 1]) | (Int(data[start + 2]) << 8)
-            start += 2 + xlen
-        }
+        guard data.count > 18 else { return nil }
         return data.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Data? in
-            guard start < data.count, let base = src.baseAddress else { return nil }
-            let srcPtr = base.advanced(by: start)
-            let srcLen = data.count - start
+            guard let base = src.baseAddress else { return nil }
+            let srcPtr = base.bindMemory(to: UInt8.self, capacity: data.count)
             var out = Data()
             let chunk = 64 * 1024
             var dst = [UInt8](repeating: 0, count: chunk)
             var stream = z_stream()
-            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: srcPtr.bindMemory(to: UInt8.self, capacity: srcLen))
-            stream.avail_in = UInt32(srcLen)
+            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: srcPtr)
+            stream.avail_in = UInt32(data.count)
             let ok = inflateInit2_(&stream, 31, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
             guard ok == Z_OK else { return nil }
             defer { inflateEnd(&stream) }
-            while stream.avail_in > 0 || stream.avail_out == 0 {
+            while true {
                 stream.next_out = dst.withUnsafeMutableBytes { $0.bindMemory(to: UInt8.self).baseAddress }
                 stream.avail_out = UInt32(chunk)
                 let r = inflate(&stream, Z_NO_FLUSH)
+                let produced = chunk - Int(stream.avail_out)
                 if r == Z_STREAM_END {
-                    out.append(dst, count: chunk - Int(stream.avail_out))
+                    out.append(dst, count: produced)
                     break
                 } else if r == Z_OK {
-                    out.append(dst, count: chunk - Int(stream.avail_out))
+                    out.append(dst, count: produced)
+                    // 输入耗尽且这一轮没产出 → 数据被截断，避免死循环
+                    if stream.avail_in == 0 && produced == 0 { return nil }
                 } else {
                     return nil
                 }
@@ -471,7 +503,7 @@ final class PackageTool: MCPTool {
     }
 
     /// Extract a (possibly compressed) tar into dest, path-traversal safe. Returns file count.
-    private func extractTar(_ raw: Data, into destURL: URL) throws -> Int {
+    private func extractTar(_ raw: Data, into destURL: URL, label: String = "data.tar") throws -> Int {
         let fm = FileManager.default
         try fm.createDirectory(at: destURL, withIntermediateDirectories: true)
 
@@ -488,7 +520,7 @@ final class PackageTool: MCPTool {
             }
             // xz / bz2 / zstd：内置原生 python3 流式解到目录
             if let n = NativeTar.extract(raw, kind: kind, into: destURL) { return n }
-            throw MCPError.classified("package: cannot decompress data.tar (\(kind)) — 内置解码器不可用或压缩数据损坏",
+            throw MCPError.classified("package: cannot decompress \(label) (\(kind)) — 内置解码器不可用或压缩数据损坏",
                                       code: "UNSUPPORTED_COMPRESSION", reason: "format",
                                       nextStep: "确认 App 内置 python3 可执行（App/bin/python3）；或在电脑端用 7-Zip / bsdtar 解包")
         }
@@ -499,11 +531,63 @@ final class PackageTool: MCPTool {
             // 会导致同一条错误被反复重试、排障靠猜。
             let ver = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
             let head = raw.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " ")
-            throw MCPError.classified("package: cannot decompress data.tar — 内置解码失败 (ver=\(ver), \(raw.count)B, hdr=\(head))",
+            throw MCPError.classified("package: cannot decompress \(label) — 内置解码失败 (ver=\(ver), \(raw.count)B, hdr=\(head))",
                                       code: "DECOMPRESS_FAILED", reason: "format",
                                       nextStep: "把 ver/大小/头部字节一起反馈；临时可在电脑端用 7-Zip 解包")
         }
         return try writeTar(tar, into: destURL)
+    }
+
+    // MARK: - 自检
+
+    /// 解码器自检：用内置的固定样本跑一遍 gzip / lzma-alone / xz 与 tar 结构判定。
+    ///
+    /// 为什么需要：gzip 那条路径曾经因为「跳过 10 字节头还让 zlib 找 gzip 头」
+    /// 而恒失败了好几个版本，每次都要靠用户上传会话日志才能发现。
+    /// 这个命令让用户在设备上一条调用就能确认解码器是否真的可用。
+    private func selfTest() -> [String: Any] {
+        let expect = (0..<20).reduce(into: Data()) { acc, _ in
+            acc.append(contentsOf: Array("TrollHax selftest payload 0123456789\n".utf8))
+        }
+        func check(_ name: String, _ got: Data?) -> [String: Any] {
+            let ok = got == expect
+            return ["case": name, "ok": ok,
+                    "got_bytes": got?.count ?? -1, "want_bytes": expect.count]
+        }
+        var rows: [[String: Any]] = []
+        rows.append(check("gzip", hexData("1f8b08000000000002030b29cacfc9f148ac50284ecd492b492d2e512848acccc94f4c513030343236313533b7b0e40a195534aa68e82a0200105aae4be4020000").flatMap { gunzip($0) }))
+        rows.append(check("lzma-alone", hexData("5d00008000ffffffffffffffff002a1c89e6f15075d86c7f71c6700ad9509f27ad82d4afa7fa67e914971ea85ffee782834a06b4937a1aef80b1ba838fffffe72f0000").flatMap { LzmaAlone.decode($0) }))
+        rows.append(check("xz", hexData("fd377a585a000004e6d6b4460200210116000000742fe5a3e002e300305d002a1c89e6f15075d86c7f71c6700ad9509f27ad82d4afa7fa67e914971ea85ffee782834a06b4937a1aef80b1841380000051fc81eb69373cbb00014ce405000000e78f4551b1c467fb020000000004595a").flatMap { XZStream.decode($0) }))
+
+        // tar 结构判定：带 ustar 魔数应通过，全零块应拒绝
+        var tarBlock = [UInt8](repeating: 0, count: 1024)
+        for (i, c) in Array("ustar".utf8).enumerated() { tarBlock[257 + i] = c }
+        rows.append(["case": "tar-detection", "ok": looksLikeTar(Data(tarBlock)) && !looksLikeTar(Data(repeating: 0, count: 512)),
+                     "got_bytes": 1024, "want_bytes": 1024])
+
+        let passed = rows.filter { ($0["ok"] as? Bool) == true }.count
+        return [
+            "command": "selftest",
+            "app_version": (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?",
+            "passed": passed, "total": rows.count,
+            "all_ok": passed == rows.count,
+            "cases": rows,
+            "hint": passed == rows.count
+                ? "内置解码器全部正常：deb 的 gzip/lzma/xz 都能在进程内解开，不需要 python3/引擎"
+                : "有解码器失败——把本结果整段反馈（含 app_version），不要重复重试解包"
+        ]
+    }
+
+    private func hexData(_ hex: String) -> Data? {
+        var out = Data(capacity: hex.count / 2)
+        var idx = hex.startIndex
+        while idx < hex.endIndex {
+            let next = hex.index(idx, offsetBy: 2, limitedBy: hex.endIndex) ?? hex.endIndex
+            guard let b = UInt8(hex[idx..<next], radix: 16) else { return nil }
+            out.append(b)
+            idx = next
+        }
+        return out.isEmpty ? nil : out
     }
 
     /// 把解压后的 tar 写进目标目录（路径穿越防护），返回写入的常规文件数。
