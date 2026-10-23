@@ -106,7 +106,12 @@ let package = Package(
         .target(
             name: "CLZMA",
             path: "CLZMA",
-            publicHeadersPath: "."
+            publicHeadersPath: ".",
+            cSettings: [
+                // xz-embedded 的头文件在 CLZMA/xz/ 下，供 xz_shim.c 解析
+                .headerSearchPath("xz"),
+                .define("XZ_USE_CRC64")
+            ]
         ),
         // v3.3.0：VPN 抓包模式 appex（PacketTunnelProvider，P1 hev 转发内核）
         .executableTarget(

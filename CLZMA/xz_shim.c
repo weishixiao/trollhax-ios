@@ -6,7 +6,7 @@
 // 而在部分越狱/AMFI 环境里 python3 子进程又起不来（Bad executable），
 // 所以这里内置 xz-embedded 在进程内解码，彻底不依赖子进程。
 
-#include "xz_config.h"   /* 同时引入 xz.h、stdlib/string，并启用 CRC64/BCJ */
+#include "xz/xz_config.h"   /* 同时引入 xz.h、stdlib/string，并启用 CRC64/BCJ */
 #include "lzma_shim.h"
 
 #include <stdint.h>
