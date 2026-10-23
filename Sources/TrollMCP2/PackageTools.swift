@@ -12,7 +12,7 @@ import CLZMA
 final class PackageTool: MCPTool {
     let definition = ToolDefinition(
         name: "package",
-        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz in-process, lzma-alone in-process C decoder, xz/bz2/zstd via bundled python3); ipa=zip(stored/deflate). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
+        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz/lzma/xz decoded in-process, bz2/zstd via bundled python3); ipa=zip(stored/deflate). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
         parameters: [
             "command": "inspect / unpack",
             "path": "absolute path to .deb or .ipa",
@@ -302,6 +302,8 @@ final class PackageTool: MCPTool {
         // .lzma-alone 优先走进程内 C 解码器（CLZMA）：不依赖 python3/bsdtar 子进程，
         // 而子进程在部分越狱/AMFI 环境会被拒（Bad executable），实测导致解包永远失败。
         if compressionKind(raw) == "lzma", let d = LzmaAlone.decode(raw) { return d }
+        // .xz 同样内置解码（LZMA2 + CRC32/CRC64 + BCJ），不依赖子进程。
+        if compressionKind(raw) == "xz", let d = XZStream.decode(raw) { return d }
         // v6.6.8：xz / lzma-alone / bz2 / zstd 一律交给内置原生 python3 的 _lzma/_bz2/_zstd。
         // 根因：Apple Compression 的 COMPRESSION_LZMA 官方只支持「XZ 容器里的 LZMA2」，
         // 解不了 deb 最常见的 .lzma-alone（13 字节头）——compression_decode_buffer 恒返回 0，
@@ -428,6 +430,9 @@ final class PackageTool: MCPTool {
             if kind == "lzma", let tar = LzmaAlone.decode(raw) {
                 return try writeTar(tar, into: destURL)
             }
+            if kind == "xz", let tar = XZStream.decode(raw) {
+                return try writeTar(tar, into: destURL)
+            }
             // xz / bz2 / zstd：内置原生 python3 流式解到目录
             if let n = NativeTar.extract(raw, kind: kind, into: destURL) { return n }
             throw MCPError.classified("package: cannot decompress data.tar (\(kind)) — 内置解码器不可用或压缩数据损坏",
@@ -474,6 +479,28 @@ private enum LzmaAlone {
         }
         guard let p = ptr else {
             ShellDiag.log("package: lzma-alone 解码失败 err=\(err) in=\(raw.count)B")
+            return nil
+        }
+        defer { lzma_shim_free(p) }
+        guard outLen > 0 else { return nil }
+        return Data(bytes: p, count: outLen)
+    }
+}
+
+/// v6.6.9：进程内 .xz 解码（xz-embedded，0BSD）。
+/// deb 的 data.tar.xz 用 LZMA2 + xz 容器 + CRC 校验，Apple Compression 解不了、
+/// python3 子进程在部分环境又起不来，所以同样内置到主进程。
+private enum XZStream {
+    static func decode(_ raw: Data, maxBytes: Int = 1 << 30) -> Data? {
+        guard raw.count > 12 else { return nil }
+        var outLen = 0
+        var err: Int32 = 0
+        let ptr = raw.withUnsafeBytes { (buf: UnsafeRawBufferPointer) -> UnsafeMutableRawPointer? in
+            guard let base = buf.baseAddress else { return nil }
+            return xz_stream_decode(base, buf.count, &outLen, &err, maxBytes)
+        }
+        guard let p = ptr else {
+            ShellDiag.log("package: xz 解码失败 err=\(err) in=\(raw.count)B")
             return nil
         }
         defer { lzma_shim_free(p) }

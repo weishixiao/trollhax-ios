@@ -55,13 +55,17 @@ final class ShellExecTool: MCPTool {
             "^dd\\s+if=",
             "mkfs",
             "^chmod\\s+-R\\s+777\\s+/",
+            // v6.6.9：拦截相对通配删除。真机事故：`cd /x && rm -rf *` 因原生 shell
+            // 不支持 cd（无 posix_spawnattr_setworkingdir_np）而在默认目录执行，
+            // 删掉了 iSH 的 proc/ 等挂载点。要求删除必须写绝对路径。
+            "rm\\s+-[a-zA-Z]*[rf][a-zA-Z]*\\s+(\\*|\\./\\*|\\./|\\.)(\\s|$|[;&|])",
         ]
         for pattern in dangerousPatterns {
             if command.range(of: pattern, options: .regularExpression) != nil {
                 return [
                     "error": "dangerous command blocked",
                     "command": command,
-                    "hint": "this command could break the system and was blocked by the safety policy."
+                    "hint": "this command could break the system and was blocked by the safety policy. 删除文件请写绝对路径（如 rm -rf /var/minis/workspace/xxx），不要用相对通配符 *。"
                 ]
             }
         }

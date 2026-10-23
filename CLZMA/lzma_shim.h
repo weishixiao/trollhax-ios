@@ -22,4 +22,13 @@ void *lzma_alone_decode(const void *src, size_t srcLen,
 /// 释放 lzma_alone_decode 返回的缓冲区。
 void lzma_shim_free(void *p);
 
+/// 解码 .xz 容器（LZMA2 + CRC32/CRC64 校验，支持 BCJ 过滤）。
+///
+/// - 返回值：malloc 出来的缓冲区，调用方用 lzma_shim_free() 释放；失败返回 NULL。
+/// - outLen：输出长度。
+/// - errOut：错误码（0 成功；-2 超过上限；-7 数据截断；-8 格式/选项错误）。
+/// - maxSize：输出上限（0 = 使用内部默认 1GB）。
+void *xz_stream_decode(const void *src, size_t srcLen,
+                       size_t *outLen, int *errOut, size_t maxSize);
+
 #endif /* LZMA_SHIM_H */

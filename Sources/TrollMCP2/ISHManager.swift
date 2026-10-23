@@ -529,7 +529,12 @@ enum ISHEngine {
                 spawnFailCount = 0
                 // guestCwd 保留 /root 默认值即可，reboot 后 /root 仍存在
             }
-            return ("[ish] process creation failed rc=\(pid)", -1, false)
+            // v6.6.9：rc=-2（无法创建进程）时引擎通常已无法在进程内恢复——
+            // 旧文案只回一行 rc，模型会当成瞬时错误反复重试（真机连续 6 次）。
+            let msg = pid == -2
+                ? "[ish] 内核无法创建进程（rc=-2）：引擎状态已损坏，进程内无法恢复。请完全关闭 App 重新打开；期间用原生命令（ls/find/plutil/python3）或 package 工具（.lzma/.xz 已内置解码，不需要引擎）。不要重复重试本命令。"
+                : "[ish] process creation failed rc=\(pid)"
+            return (msg, -1, false)
         }
         ShellDiag.log("ISH spawned pid=\(pid)")
 
