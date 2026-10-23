@@ -15,9 +15,9 @@ import Foundation
 final class EngineTool: MCPTool {
     let definition = ToolDefinition(
         name: "engine",
-        summary: "Control the Alpine/iSH engine that db/file/package/tool.install depend on. Use for: engine off and a tool needs it, check which tools need Alpine, recover after an engine crash. Don't use for: running commands inside Alpine (use hax or shell.exec). Example: db fails with 'iSH 已关闭' → engine {command:'on'} then retry.",
+        summary: "Control the Alpine/iSH engine that db/file/package/tool.install depend on. Commands: status / on / off / restart / reset-rootfs / probe. Use for: engine off and a tool needs it, check which tools need Alpine, recover after an engine crash (repeated 'rc=-2' → reset-rootfs then fully relaunch the app). Don't use for: running commands inside Alpine (use hax or shell.exec). Example: db fails with 'iSH 已关闭' → engine {command:'on'} then retry.",
         parameters: [
-            "command": "status / on / off / restart / probe"
+            "command": "status / on / off / restart / reset-rootfs / probe"
         ],
         verified: true,
         category: "terminal",
@@ -34,9 +34,10 @@ final class EngineTool: MCPTool {
         case "on":      return setEnabled(true)
         case "off":     return setEnabled(false)
         case "restart": return restart()
+        case "reset-rootfs", "reset_rootfs", "resetrootfs": return resetRootfs()
         case "probe":   return probe()
         default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: status/on/off/restart/probe")
+            throw MCPError.invalidParams("Unknown command: \(command). Available: status/on/off/restart/reset-rootfs/probe")
         }
     }
 
@@ -66,6 +67,7 @@ final class EngineTool: MCPTool {
             "kernel_booted": booted,
             "child_isolation": isolated,
             "jailbreak": JBEnvironment.kind.rawValue,
+            "rootfs": ISHEngine.rootfsInfo(),
             "alpine_dependent_tools": [
                 ["tool": "db",            "why": "sqlite3 查 App 数据库；无 Alpine 时回退 iOS 原生 sqlite3"],
                 ["tool": "file",          "why": "file/strings 分析二进制；无 Alpine 时回退原生 file"],
@@ -109,6 +111,21 @@ final class EngineTool: MCPTool {
                 : "引擎未启用；已重置运行态",
             "engine_enabled": wasEnabled,
             "kernel_booted": ISHEngine.isBooted
+        ]
+    }
+
+    /// v6.6.10：重建 rootfs——真机上 `rm -rf *` 曾删掉 guest 的 /proc 等挂载点，
+    /// 之后每次 spawn 都是 rc=-2，而 restart 只重置 state、复用同一份坏 rootfs，永远好不了。
+    private func resetRootfs() -> [String: Any] {
+        let r = ISHEngine.resetRootfs()
+        return [
+            "ok": r.ok,
+            "message": r.message,
+            "rootfs_existed": r.rootfsExists,
+            "rootfs": ISHEngine.rootfsInfo(),
+            "next": r.ok
+                ? "完全关闭 App（上滑杀掉）→ 重新打开 → 首次 shell 调用会自动重新解压 rootfs 并启动引擎"
+                : "删除失败：请到 设置 → 通用 → iPhone 储存空间 或文件 App 里手动删除 App 的 Documents/alpine-rootfs"
         ]
     }
 

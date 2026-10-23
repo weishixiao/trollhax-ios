@@ -66,6 +66,64 @@ enum ISHEngine {
         AuditLog.shared.log("engine.reset", detail: "state reset to idle")
     }
 
+    /// v6.6.10：彻底重建 Alpine rootfs。
+    ///
+    /// 为什么需要：真机上出现过 `rm -rf *` 在 guest 根目录执行（原生 shell 不支持 cd），
+    /// 删掉了 rootfs 里的 /proc 等挂载点，之后每次 spawn 都是 rc=-2，
+    /// 而 resetRuntimeState 只是重置 state、复用同一份坏掉的 rootfs，永远好不了。
+    /// 唯一可靠恢复 = 删掉 Documents/alpine-rootfs，下次冷启动重新从 bundle 解压。
+    ///
+    /// 注意：iSH 内核一旦 boot 就无法在进程内卸载，所以这里只做删除+标记，
+    /// 真正的重建发生在 App 重新打开后（返回文案会明确要求）。
+    private static var needsRelaunchAfterReset = false
+
+    static func resetRootfs() -> (ok: Bool, message: String, rootfsExists: Bool) {
+        let fm = FileManager.default
+        let existed = fm.fileExists(atPath: rootfsDir)
+        do {
+            if existed { try fm.removeItem(atPath: rootfsDir) }
+        } catch {
+            return (false, "删除 rootfs 失败：\(error.localizedDescription)（路径 \(rootfsDir)）", existed)
+        }
+        lock.lock()
+        state = .idle
+        spawnFailCount = 0
+        mountedBindPoints.removeAll()
+        needsRelaunchAfterReset = true
+        lock.unlock()
+        ShellDiag.log("engine.resetRootfs: removed=\(existed) path=\(rootfsDir)")
+        AuditLog.shared.log("engine.resetRootfs", detail: "removed=\(existed)")
+        let tail = existed
+            ? "已删除损坏的 rootfs。请【完全关闭 App】再重新打开——下次会自动从内置包重新解压（约 10-20 秒）。"
+            : "rootfs 本来就不存在，已标记重建。请【完全关闭 App】再重新打开。"
+        return (true, tail, existed)
+    }
+
+    /// 重置后是否必须重启 App 才能继续用引擎（iSH 内核不可在进程内卸载）
+    static var requiresRelaunch: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return needsRelaunchAfterReset
+    }
+
+    /// rootfs 概况，用于 engine status 诊断
+    static func rootfsInfo() -> [String: Any] {
+        let fm = FileManager.default
+        let exists = fm.fileExists(atPath: dataPath)
+        var sizeMB = 0.0
+        if fm.fileExists(atPath: rootfsDir) {
+            let en = fm.enumerator(atPath: rootfsDir)
+            var total: Int64 = 0
+            while let f = en?.nextObject() as? String {
+                if let a = try? fm.attributesOfItem(atPath: rootfsDir + "/" + f),
+                   let sz = a[.size] as? Int64 { total += sz }
+            }
+            sizeMB = Double(total) / 1_048_576.0
+        }
+        return ["rootfs_dir": rootfsDir, "data_present": exists,
+                "size_mb": (sizeMB * 10).rounded() / 10,
+                "relaunch_required": requiresRelaunch]
+    }
+
     static var isBooted: Bool {
         if case .booted = state { return true }
         return false
@@ -428,6 +486,12 @@ enum ISHEngine {
                 return ("[iSH 已关闭·防闪退] Alpine/iSH 引擎未启用（实测在 arm64 上执行会段错误闪退）。\n原生替代：ls/cat/grep/find/du/plutil/sqlite3/strings/nm/hexdump/objdump/python3(内置原生)。\n需要 apk add / git / 完整 tar 时：调 engine {command:\"on\"} 开启，或到 设置 → 安全 → 开启「Alpine/iSH 引擎」。",
                         127, false)
             }
+        }
+        // v6.6.10：rootfs 已重置但内核仍挂在旧树上——iSH 无法在进程内卸载内核，
+        // 继续 spawn 只会重复 rc=-2，直接给出唯一有效的下一步。
+        if requiresRelaunch {
+            return ("[iSH] rootfs 已重置，需要【完全关闭 App】再重新打开才能重新解压/启动引擎。本进程内无法卸载已 boot 的内核，重试无效。",
+                    -1, false)
         }
         // v6.3.9：进程隔离（默认开启，设置里可关）——命令交给 `-trollish` 子进程内执行，
         // 引擎段错误只死子进程，主 App 不闪退（用户 11 次崩溃主因）。
