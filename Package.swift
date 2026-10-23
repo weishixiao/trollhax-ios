@@ -106,7 +106,9 @@ let package = Package(
         .target(
             name: "CLZMA",
             path: "CLZMA",
-            publicHeadersPath: ".",
+            // 只公开 lzma_shim.h：7zTypes.h 里有 `typedef int Bool`，
+            // 一旦进公共头就会污染 Swift 侧（Bool 变成 Int32，整个文件编译失败）。
+            publicHeadersPath: "include",
             cSettings: [
                 // xz-embedded 的头文件在 CLZMA/xz/ 下，供 xz_shim.c 解析
                 .headerSearchPath("xz"),

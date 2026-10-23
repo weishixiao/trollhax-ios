@@ -6,8 +6,8 @@
 //   byte 5..12  : uncompressed size (LE64)；全 0xFF 表示未知（流尾有 EOS 标记）
 //   byte 13..   : LZMA1 压缩流
 
-#include "lzma_shim.h"
-#include "LzmaDec.h"
+#include "include/lzma_shim.h"
+#include "sdk/LzmaDec.h"
 
 #include <stdlib.h>
 #include <string.h>
