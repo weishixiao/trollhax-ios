@@ -137,6 +137,8 @@ final class PackageTool: MCPTool {
 
         return [
             "format": "deb (ar archive)",
+            "app_version": (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?",
+            "decoders": "in-process: gzip(zlib)/lzma-alone/xz; python3: bz2/zstd",
             "path": path,
             "file_size": data.count,
             "members": members,
@@ -258,6 +260,7 @@ final class PackageTool: MCPTool {
 
         return [
             "command": "unpack",
+            "app_version": (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?",
             "format": format,
             "dest": destURL.path,
             "extracted_count": extracted,
@@ -291,14 +294,31 @@ final class PackageTool: MCPTool {
         if raw.count >= 6 && raw[0..<6].elementsEqual([0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) { return "xz" }
         if raw.count >= 3 && raw[0] == 0x42 && raw[1] == 0x5A && raw[2] == 0x68 { return "bz2" }   // "BZh"
         if raw.count >= 4 && raw[0..<4].elementsEqual([0x28, 0xB5, 0x2F, 0xFD]) { return "zstd" }
-        // .lzma-alone：13 字节头，第 0 字节是 lc/lp/pb 属性（deb 工具链默认 0x5D）
-        if raw.count >= 14, raw[0] == 0x5D, raw[1] == 0x00, raw[2] == 0x00 { return "lzma" }
+        // .lzma-alone：13 字节头
+        //   byte0    = lc/lp/pb 属性，合法范围 0..224（默认 0x5D）
+        //   byte1..4 = 字典大小 LE32
+        //   byte5..12= 原始大小，未知时全 0xFF
+        // 旧实现硬要求 byte1/byte2 == 0（即字典 < 64KB 段），换个字典大小就漏判，
+        // 于是 data.tar.lzma 直接落到「未知格式」→ cannot decompress。改为校验属性范围
+        // + 大小字段形状，既能识别任意字典大小，也不会把普通文件误判。
+        if raw.count >= 14 {
+            let props = raw[raw.startIndex]
+            var declared: UInt64 = 0
+            for i in 5..<13 { declared |= UInt64(raw[raw.startIndex + i]) << (8 * UInt64(i - 5)) }
+            let unknownSize = (declared == 0xFFFF_FFFF_FFFF_FFFF)
+            // 合理性：未知大小，或声明值落在 1B..4GB
+            if props < 225, unknownSize || (declared > 0 && declared < 0x1_0000_0000) {
+                return "lzma"
+            }
+        }
         return nil
     }
 
     private func decompressTar(_ raw: Data) -> Data? {
         // detect by magic
         if raw.count >= 2 && raw[0] == 0x1F && raw[1] == 0x8B { return gunzip(raw) }       // gzip
+        // 裸 tar 先判（ustar 魔数/校验和是很强的特征）：否则压缩判定可能把它误认成 lzma。
+        if raw.count >= 512, looksLikeTar(raw) { return raw }
         // .lzma-alone 优先走进程内 C 解码器（CLZMA）：不依赖 python3/bsdtar 子进程，
         // 而子进程在部分越狱/AMFI 环境会被拒（Bad executable），实测导致解包永远失败。
         if compressionKind(raw) == "lzma", let d = LzmaAlone.decode(raw) { return d }
@@ -309,8 +329,41 @@ final class PackageTool: MCPTool {
         // 解不了 deb 最常见的 .lzma-alone（13 字节头）——compression_decode_buffer 恒返回 0，
         // 旧实现于是每次都报 "cannot decompress data.tar"（真机实测，数据为 0x5D 68MB 字典）。
         if let kind = compressionKind(raw), let d = NativeTar.decompress(raw, kind: kind) { return d }
-        if raw.count >= 512 { return raw } // plain tar
+        // 最后一招：头部形态不被识别时也试一次 lzma——各打包工具的字典大小、
+        // 声明大小写法不一，光靠魔数会漏判（真机就遇到过）。解完再用 tar 结构校验，
+        // 不会把随机数据当成成功。
+        if raw.count > 14, let d = LzmaAlone.decode(raw), looksLikeTar(d) { return d }
         return nil
+    }
+
+    /// 判断一段数据是否像 tar（ustar 魔数或头部校验和自洽）。
+    /// 用于压缩解码后的结果验证，避免把「解出一堆垃圾」当成功。
+    private func looksLikeTar(_ d: Data) -> Bool {
+        guard d.count >= 512 else { return false }
+        let base = d.startIndex
+        if d.count >= 265 {
+            let magic = d[(base + 257)..<(base + 262)]
+            if magic.elementsEqual([0x75, 0x73, 0x74, 0x61, 0x72]) { return true }   // "ustar"
+        }
+        // 校验和字段：148..156，八进制 ASCII
+        var stored: Int64 = 0
+        var digits = 0
+        for i in 148..<156 {
+            let c = d[base + i]
+            if c == 0 || c == 0x20 { if digits > 0 { break } else { continue } }
+            guard c >= 0x30, c <= 0x37 else { return false }
+            stored = stored * 8 + Int64(c - 0x30)
+            digits += 1
+        }
+        guard digits > 0 else { return false }
+        var unsigned: Int64 = 0
+        var signed: Int64 = 0
+        for i in 0..<512 {
+            let c = (i >= 148 && i < 156) ? UInt8(0x20) : d[base + i]
+            unsigned += Int64(c)
+            signed += (c & 0x80) != 0 ? Int64(c) - 256 : Int64(c)
+        }
+        return stored == unsigned || stored == signed
     }
 
     private func gunzip(_ data: Data) -> Data? {
@@ -441,7 +494,14 @@ final class PackageTool: MCPTool {
         }
 
         guard let tar = decompressTar(raw) else {
-            throw MCPError.failed("package: cannot decompress data.tar")
+            // v6.6.10：把 App 版本一起带出来——旧文案只有一句 cannot decompress，
+            // 无法区分「装的是旧版没有内置解码器」还是「解码器真失败」，
+            // 会导致同一条错误被反复重试、排障靠猜。
+            let ver = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
+            let head = raw.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " ")
+            throw MCPError.classified("package: cannot decompress data.tar — 内置解码失败 (ver=\(ver), \(raw.count)B, hdr=\(head))",
+                                      code: "DECOMPRESS_FAILED", reason: "format",
+                                      nextStep: "把 ver/大小/头部字节一起反馈；临时可在电脑端用 7-Zip 解包")
         }
         return try writeTar(tar, into: destURL)
     }
