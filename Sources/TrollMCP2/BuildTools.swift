@@ -37,8 +37,39 @@ final class BuildRunner {
     ///   - workingDir: 工作目录 (nil = 直接 spawn）
     ///   - env: 追加/覆盖的环境变量
     ///   - timeout: 超时秒数 (0 = 不超时）
+    // MARK: - 越狱 spawn 拦截（v6.6.14）
+    //
+    // rootHide / Relaxin 这类越狱会 hook posix_spawn，对 App 容器内的第三方
+    // Mach-O 直接返回 ENOSYS(85)，Apple 系统二进制（如 /usr/bin/plutil）不受影响。
+    // 表现就是 python3/r2/bsdtar 全部 "Bad executable (or shared library)"。
+    // 不记住这个事实的话，模型会把它当瞬时错误反复重试（实测 6 次以上）。
+    private static let spawnBlockedKey = "spawnBlockedBundledENOSYS"
+
+    static var bundledSpawnBlocked: Bool {
+        UserDefaults.standard.bool(forKey: spawnBlockedKey)
+    }
+
+    /// 诊断工具需要真实探测时清掉记忆
+    static func resetSpawnBlock() {
+        UserDefaults.standard.removeObject(forKey: spawnBlockedKey)
+    }
+
+    private static func noteSpawnFailure(path: String, errno: Int32) {
+        guard path.hasPrefix(Bundle.main.bundlePath) else { return }
+        guard errno == 85 || errno == 8 else { return }
+        UserDefaults.standard.set(true, forKey: spawnBlockedKey)
+        ShellDiag.log("spawn blocked by jailbreak errno=\(errno) path=\(path)")
+    }
+
+    static let spawnBlockedMessage = "[spawn 被越狱拦截] 本机 rootHide/Relaxin 拒绝执行 App 内的第三方二进制（ENOSYS 85），python3 / r2 / bsdtar / node / lua / od 等子进程工具在本设备上不可用，重试无效。请改用进程内工具：inject binary_symbols（符号/字符串/ObjC 类）、package（deb/ipa 解包，gzip/lzma/xz 已内置）、plutil / grep / cat（原生过滤）、macho（Mach-O 结构）。跑 diagnose {command:\"spawn\"} 可复检。"
+
     func run(executable: String, args: [String], workingDir: String? = nil,
              env: [String: String] = [:], timeout: TimeInterval = 300) -> BuildProcessResult {
+        if BuildRunner.bundledSpawnBlocked, executable.hasPrefix(Bundle.main.bundlePath) {
+            return BuildProcessResult(exitCode: -1, stdout: "",
+                                      stderr: BuildRunner.spawnBlockedMessage,
+                                      timedOut: false, spawnError: BuildRunner.spawnBlockedMessage)
+        }
         guard FileManager.default.fileExists(atPath: executable) else {
             return BuildProcessResult(exitCode: -1, stdout: "", stderr: "executable not found: \(executable)", timedOut: false, spawnError: "not found")
         }
@@ -83,6 +114,7 @@ final class BuildRunner {
         if spawnStatus != 0 {
             // v6.6.13：带上 errno 数值——"Bad executable" 同时覆盖签名无效、
             // 依赖 framework 缺失、文件损坏三种情况，只有 errno 能区分。
+            BuildRunner.noteSpawnFailure(path: path, errno: spawnStatus)
             let msg = "posix_spawn failed: \(String(cString: strerror(spawnStatus))) (errno \(spawnStatus))"
             try? FileManager.default.removeItem(atPath: outPath)
             try? FileManager.default.removeItem(atPath: errPath)

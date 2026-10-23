@@ -80,6 +80,8 @@ enum SpawnDiag {
     }
 
     static func run() -> [String: Any] {
+        // 诊断要真实探测，先清掉上一次的"被拦截"记忆
+        BuildRunner.resetSpawnBlock()
         let fm = FileManager.default
         let binDir = Bundle.main.bundlePath + "/bin"
         let names = ["python3", "node", "r2", "cstool", "lua", "jq", "bsdtar", "ldid"]
@@ -122,8 +124,15 @@ enum SpawnDiag {
         }
 
         let broken = rows.filter { ($0["present"] as? Bool) == true && ($0["spawn_ok"] as? Bool) == false }
+        // errno 85 = ENOSYS：不是文件坏了，是越狱 hook 了 posix_spawn 拒绝执行
+        let enosys = broken.contains { (($0["spawn_error"] as? String) ?? "").contains("errno 85") }
         var advice = "内置二进制均可执行"
-        if !broken.isEmpty {
+        if enosys {
+            advice = "errno 85 = ENOSYS：本机越狱（rootHide / Relaxin）hook 了 posix_spawn，"
+                + "拒绝执行 App 容器内的第三方二进制。这不是签名或文件损坏，重装/重签都无效；"
+                + "Apple 系统二进制（/usr/bin/plutil 等）仍可执行。"
+                + "请改用进程内工具：inject binary_symbols / package / macho / plutil / grep。"
+        } else if !broken.isEmpty {
             advice = "有 \(broken.count) 个内置二进制无法 spawn。看每行的 code_signature / mach_o / first_rpath_dylib_exists："
                 + "mach_o=false → 文件损坏（不是 Mach-O）；code_signature=false → 重签时被 strip；"
                 + "first_rpath_dylib_exists=false → 依赖 framework 缺失（同样报 Bad executable）"
@@ -135,6 +144,7 @@ enum SpawnDiag {
             "sandboxed_container": Bundle.main.bundlePath.contains("/Containers/Bundle/Application/"),
             "binaries": rows,
             "broken_count": broken.count,
+            "jailbreak_spawn_blocked": enosys,
             "advice": advice
         ]
     }
