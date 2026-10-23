@@ -81,7 +81,9 @@ final class BuildRunner {
         posix_spawn_file_actions_destroy(&fileActions)
 
         if spawnStatus != 0 {
-            let msg = "posix_spawn failed: \(String(cString: strerror(spawnStatus)))"
+            // v6.6.13：带上 errno 数值——"Bad executable" 同时覆盖签名无效、
+            // 依赖 framework 缺失、文件损坏三种情况，只有 errno 能区分。
+            let msg = "posix_spawn failed: \(String(cString: strerror(spawnStatus))) (errno \(spawnStatus))"
             try? FileManager.default.removeItem(atPath: outPath)
             try? FileManager.default.removeItem(atPath: errPath)
             return BuildProcessResult(exitCode: -1, stdout: "", stderr: msg, timedOut: false, spawnError: msg)
