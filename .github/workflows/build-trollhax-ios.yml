@@ -25,6 +25,10 @@ on:
         default: ''
   push:
     branches: [main]
+    # 纯文档改动不需要重打 108MB 包（README/docs 改动不触发构建）
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 
 jobs:
   # v4.4.5: 原生工具链（lua arm64 iOS 交叉编译，产物缓存秒级）。
