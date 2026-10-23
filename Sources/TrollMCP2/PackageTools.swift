@@ -7,11 +7,12 @@ import Foundation
 import Compression
 import zlib
 import ZIPFoundation
+import CLZMA
 
 final class PackageTool: MCPTool {
     let definition = ToolDefinition(
         name: "package",
-        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz/lzma/xz/bz2/zstd, decoded by bundled python3); ipa=zip(stored/deflate). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
+        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz in-process, lzma-alone in-process C decoder, xz/bz2/zstd via bundled python3); ipa=zip(stored/deflate). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
         parameters: [
             "command": "inspect / unpack",
             "path": "absolute path to .deb or .ipa",
@@ -298,6 +299,9 @@ final class PackageTool: MCPTool {
     private func decompressTar(_ raw: Data) -> Data? {
         // detect by magic
         if raw.count >= 2 && raw[0] == 0x1F && raw[1] == 0x8B { return gunzip(raw) }       // gzip
+        // .lzma-alone 优先走进程内 C 解码器（CLZMA）：不依赖 python3/bsdtar 子进程，
+        // 而子进程在部分越狱/AMFI 环境会被拒（Bad executable），实测导致解包永远失败。
+        if compressionKind(raw) == "lzma", let d = LzmaAlone.decode(raw) { return d }
         // v6.6.8：xz / lzma-alone / bz2 / zstd 一律交给内置原生 python3 的 _lzma/_bz2/_zstd。
         // 根因：Apple Compression 的 COMPRESSION_LZMA 官方只支持「XZ 容器里的 LZMA2」，
         // 解不了 deb 最常见的 .lzma-alone（13 字节头）——compression_decode_buffer 恒返回 0，
@@ -420,8 +424,13 @@ final class PackageTool: MCPTool {
         // 好处：不必把整个解压后的 tar 读进内存（deb 常见 10MB→100MB+），
         // tarfile 的 filter='data' 同时承担了路径穿越防护。
         if let kind = compressionKind(raw) {
+            // .lzma-alone：进程内解码，完全不依赖子进程
+            if kind == "lzma", let tar = LzmaAlone.decode(raw) {
+                return try writeTar(tar, into: destURL)
+            }
+            // xz / bz2 / zstd：内置原生 python3 流式解到目录
             if let n = NativeTar.extract(raw, kind: kind, into: destURL) { return n }
-            throw MCPError.classified("package: cannot decompress data.tar (\(kind)) — 内置原生 python3 不可用或压缩数据损坏",
+            throw MCPError.classified("package: cannot decompress data.tar (\(kind)) — 内置解码器不可用或压缩数据损坏",
                                       code: "UNSUPPORTED_COMPRESSION", reason: "format",
                                       nextStep: "确认 App 内置 python3 可执行（App/bin/python3）；或在电脑端用 7-Zip / bsdtar 解包")
         }
@@ -429,6 +438,12 @@ final class PackageTool: MCPTool {
         guard let tar = decompressTar(raw) else {
             throw MCPError.failed("package: cannot decompress data.tar")
         }
+        return try writeTar(tar, into: destURL)
+    }
+
+    /// 把解压后的 tar 写进目标目录（路径穿越防护），返回写入的常规文件数。
+    private func writeTar(_ tar: Data, into destURL: URL) throws -> Int {
+        let fm = FileManager.default
         var count = 0
         for (name, content) in parseTar(tar) {
             let clean = name.trimmingCharacters(in: CharacterSet(charactersIn: "./"))
@@ -440,6 +455,30 @@ final class PackageTool: MCPTool {
             count += 1
         }
         return count
+    }
+}
+
+/// v6.6.9：进程内 .lzma-alone 解码（CLZMA / LZMA SDK，公有领域）。
+///
+/// 这是 deb 解包最关键的一层：实测环境里 python3 子进程会被 AMFI 拒绝
+/// （posix_spawn: Bad executable），只要解压依赖子进程，`package unpack`
+/// 就必然失败。C 解码器编进主二进制，任何环境下都能解 .lzma。
+private enum LzmaAlone {
+    static func decode(_ raw: Data, maxBytes: Int = 1 << 30) -> Data? {
+        guard raw.count > 13 else { return nil }
+        var outLen = 0
+        var err: Int32 = 0
+        let ptr = raw.withUnsafeBytes { (buf: UnsafeRawBufferPointer) -> UnsafeMutableRawPointer? in
+            guard let base = buf.baseAddress else { return nil }
+            return lzma_alone_decode(base, buf.count, &outLen, &err, maxBytes)
+        }
+        guard let p = ptr else {
+            ShellDiag.log("package: lzma-alone 解码失败 err=\(err) in=\(raw.count)B")
+            return nil
+        }
+        defer { lzma_shim_free(p) }
+        guard outLen > 0 else { return nil }
+        return Data(bytes: p, count: outLen)
     }
 }
 

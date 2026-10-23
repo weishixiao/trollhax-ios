@@ -98,6 +98,16 @@ let package = Package(
                 .linkedLibrary("hev-socks5-tunnel")
             ]
         ),
+        // v6.6.8：CLZMA——进程内 LZMA1 解码器（公有领域 LZMA SDK 的 LzmaDec）。
+        // 为什么必须内置：Apple Compression 的 COMPRESSION_LZMA 只吃「XZ 容器里的 LZMA2」，
+        // deb 的 data.tar.lzma 是 .lzma-alone，compression_decode_buffer 恒返回 0；
+        // 而 App 内拉起 python3/bsdtar 子进程在部分越狱环境会被 AMFI 拒（Bad executable），
+        // 导致 package unpack 永远失败。C 解码器不依赖任何子进程与系统框架。
+        .target(
+            name: "CLZMA",
+            path: "CLZMA",
+            publicHeadersPath: "."
+        ),
         // v3.3.0：VPN 抓包模式 appex（PacketTunnelProvider，P1 hev 转发内核）
         .executableTarget(
             name: "VpnTunnel",
@@ -118,6 +128,7 @@ let package = Package(
                 "MitmCore",
                 "CMitm",
                 "CLaunch",
+                "CLZMA",
                 // v6.7.0：VansonMod 内存引擎（GPL-3.0）——memory 工具的原生扫描/读写/冻结实现
                 "VansonEngine"
             ],
