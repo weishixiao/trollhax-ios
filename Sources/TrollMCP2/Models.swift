@@ -1772,6 +1772,13 @@ final class ConversationStore: ObservableObject {
             // v6.6.21：熔断触发 → 终止本轮，不再把控制权交回模型。
             // 旧行为只是把"已停止本次调用"当普通工具结果喂回去，
             // 模型会继续同样参数重试（真机连续 13 次），用户只能干等。
+            // v6.6.26：环境类错误（未登录 / iOS 17+ 不支持）重试必然同样失败，
+            // 直接终止本轮，不再把错误文本交回模型（实测连试 18 次）。
+            let em = err.localizedDescription
+            if em.contains("[NOT_LOGGED_IN]") || em.contains("[UNSUPPORTED_ON_IOS17]")
+                || em.contains("not logged in to GitHub") {
+                ToolRegistry.abortRunRequested = true
+            }
             if ToolRegistry.abortRunRequested {
                 ToolRegistry.abortRunRequested = false
                 self.isLoading = false
