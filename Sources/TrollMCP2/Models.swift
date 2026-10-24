@@ -797,6 +797,11 @@ final class ConversationStore: ObservableObject {
         if let id = activeConvId ?? requestSessionId, let i = conversations.firstIndex(where: { $0.id == id }) {
             return i
         }
+        // v6.6.26：运行期间**禁止**回退到 selectedIndex。
+        // 真机现象：A 在跑时切到 B 发消息，由于 activeConvId 解析不到，
+        // appendToCurrent 回退到"当前选中"，把 B 的消息/A 的输出写进了同一个会话。
+        // 拿不到归属就返回 nil（调用方丢弃这次写入），宁可少一条也不写错会话。
+        if isLoading { return nil }
         return selectedIndex
     }
 
