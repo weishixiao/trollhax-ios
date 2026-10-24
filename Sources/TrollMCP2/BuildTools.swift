@@ -61,7 +61,7 @@ final class BuildRunner {
         ShellDiag.log("spawn blocked by jailbreak errno=\(errno) path=\(path)")
     }
 
-    static let spawnBlockedMessage = "[spawn 被越狱拦截] 本机 rootHide/Relaxin 拒绝执行 App 内的第三方二进制（ENOSYS 85），python3 / r2 / bsdtar / node / lua / od 等子进程工具在本设备上不可用，重试无效。请改用进程内工具：inject binary_symbols（符号/字符串/ObjC 类）、package（deb/ipa 解包，gzip/lzma/xz 已内置）、plutil / grep / cat（原生过滤）、macho（Mach-O 结构）。跑 diagnose {command:\"spawn\"} 可复检。"
+    static let spawnBlockedMessage = "[spawn 被越狱拦截] 本机 rootHide/Relaxin 拒绝执行 App 内的第三方二进制（ENOSYS 85），python3 / r2 / bsdtar / node / lua / od 等子进程工具在本设备上不可用，重试无效。请改用进程内工具（都是 MCP 工具，直接在对话里调用，**不要写成 shell 命令**）：inject binary_symbols（符号/字符串/ObjC 类）、macho（Mach-O 结构）、disasm（反汇编）、py（Python）、package（deb/ipa 解包，gzip/lzma/xz 已内置）。跑 diagnose {command:\"spawn\"} 可复检。"
 
     func run(executable: String, args: [String], workingDir: String? = nil,
              env: [String: String] = [:], timeout: TimeInterval = 300) -> BuildProcessResult {
