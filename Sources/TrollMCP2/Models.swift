@@ -920,7 +920,7 @@ final class ConversationStore: ObservableObject {
 
     func send(_ text: String, using config: ModelConfig, imageDataURLs: [String]? = nil,
               reasoningLevel: Int = 0, smartSearch: Bool = true,
-              appendUserMessage: Bool = true) {
+              appendUserMessage: Bool = true, in convId: UUID? = nil) {
         // v6.6.17：会话级并发——本实例正在跑 A，用户切到 B 又发消息时，
         // 把 B 交给独立的后台 worker（它有自己的整套运行状态），
         // 这里只负责把用户消息落到 B 的 UI 上，然后在完成时合并结果。
@@ -952,8 +952,11 @@ final class ConversationStore: ObservableObject {
         retriedNetworkOnce = false
         cancelNetworkRetry()
         // v3.1.70：请求绑定到发起时的会话——中途切换会话，输出仍写回该会话 (修复输出错位）
-        activeConvId = selectedId
-        requestSessionId = selectedId   // v4.5.8：永不清除的锁定兜底 (防 activeConvId 清 nil 后写错会话）
+        // v6.6.26：写入目标由调用方显式给出（ChatView 知道自己显示哪个会话），
+        // 不再依赖全局 selectedId —— 抽屉切换滞后时会把消息写进别的会话。
+        let targetConvId = convId ?? selectedId
+        activeConvId = targetConvId
+        requestSessionId = targetConvId   // v4.5.8：永不清除的锁定兜底 (防 activeConvId 清 nil 后写错会话）
         // v3.4.9：新请求开始，清掉上一轮的"刚产出"标记（避免旧消息被重新打字）
         liveProducedID = nil
         // v3.5.5：新任务开始，重置"先解说后执行"自适应纠正状态（避免跨任务计数器残留）

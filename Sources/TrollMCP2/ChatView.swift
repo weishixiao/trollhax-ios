@@ -436,7 +436,7 @@ struct ChatView: View {
         guard let cfg = modelStore.defaultConfig else { return }
         if store.selectedId == nil { store.newConversation() }
         inputText = ""
-        store.send(text, using: cfg, reasoningLevel: thinkEnabled ? reasoning : 5, smartSearch: smartSearch)
+        store.send(text, using: cfg, reasoningLevel: thinkEnabled ? reasoning : 5, smartSearch: smartSearch, in: store.selectedId)
     }
 
     private var messageList: some View {
@@ -827,7 +827,7 @@ struct ChatView: View {
         pendingAttachments = []
         let finalImgs = attImgs.isEmpty ? imagesToSend : attImgs
         // v3.4.1：思考总开关接入主发送路径（此前漏传，思考·开/关在输入框无效）
-        store.send(text, using: cfg, imageDataURLs: finalImgs, reasoningLevel: thinkEnabled ? reasoning : 3, smartSearch: smartSearch)
+        store.send(text, using: cfg, imageDataURLs: finalImgs, reasoningLevel: thinkEnabled ? reasoning : 3, smartSearch: smartSearch, in: store.selectedId)
         AuditLog.shared.log("chat", detail: "发送消息")
     }
 
