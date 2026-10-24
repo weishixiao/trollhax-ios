@@ -331,6 +331,92 @@ enum DecryptEngine {
         return EncryptionInfo(cryptoff: 0, cryptsize: 0, cryptid: 0, loadCommandAddr: 0)
     }
 
+    /// v6.6.25：读出**所有** LC_ENCRYPTION_INFO[_64]。
+    /// 旧实现只取第一个——多数 App 确实只有 __TEXT 一段，但拆分加密的二进制
+    /// （部分 App Store 包 / 扩展）会有多条，只处理第一条会留下未解密的段落，
+    /// 产物能打开却跑不起来。frida-ios-dump 与 FlexDecrypt 都是按段处理的。
+    static func readEncryptionInfos(task: UInt32, loadAddress: UInt64) -> [EncryptionInfo] {
+        guard let headerData = vmRead(task: task, address: loadAddress, size: 32) else { return [] }
+        let magic = loadU32(headerData, 0)
+        var offset: Int
+        switch magic {
+        case MH_MAGIC_64: offset = 32
+        case MH_MAGIC: offset = 28
+        default: return []
+        }
+        let ncmds = loadU32(headerData, 16)
+        guard ncmds > 0, ncmds < 4096 else { return [] }
+        var addr = loadAddress + UInt64(offset)
+        var out: [EncryptionInfo] = []
+        for _ in 0..<ncmds {
+            guard let lc = vmRead(task: task, address: addr, size: 8) else { break }
+            let cmd = loadU32(lc, 0)
+            let cmdsize = loadU32(lc, 4)
+            guard cmdsize >= 8, cmdsize <= 1 << 16 else { break }
+            if cmd == LC_ENCRYPTION_INFO || cmd == LC_ENCRYPTION_INFO_64 {
+                if let enc = vmRead(task: task, address: addr, size: 24) {
+                    out.append(EncryptionInfo(cryptoff: loadU32(enc, 8),
+                                              cryptsize: loadU32(enc, 12),
+                                              cryptid: loadU32(enc, 16),
+                                              loadCommandAddr: addr))
+                }
+            }
+            addr += UInt64(cmdsize)
+        }
+        return out
+    }
+
+    /// v6.6.25：按段重建——逐段拷贝源文件，加密区从运行中的进程读，
+    /// 最后把所有 cryptid 清零（对齐 frida-ios-dump 的 patch_cryptid 行为）。
+    static func rebuildDecryptedImageMulti(sourcePath: String, task: UInt32, loadAddress: UInt64,
+                                           encs: [EncryptionInfo], outputPath: String) -> Bool {
+        let regions = encs.filter { $0.cryptsize > 0 }.sorted { $0.cryptoff < $1.cryptoff }
+        guard !regions.isEmpty else { return false }
+        guard let src = FileHandle(forReadingAtPath: sourcePath) else { return false }
+        defer { try? src.close() }
+        let fileSize = (try? src.seekToEnd()) ?? 0
+        guard let last = regions.last,
+              UInt64(last.cryptoff) + UInt64(last.cryptsize) <= fileSize else { return false }
+
+        FileManager.default.createFile(atPath: outputPath, contents: nil)
+        guard let dst = FileHandle(forWritingAtPath: outputPath) else { return false }
+        defer { try? dst.close() }
+
+        func copyRange(from: UInt64, to: UInt64) -> Bool {
+            var pos = from
+            while pos < to {
+                let chunk = min(to - pos, UInt64(1 << 20))
+                try? src.seek(toOffset: pos)
+                let d = src.readData(ofLength: Int(chunk))
+                guard d.count == Int(chunk) else { return false }
+                dst.write(d)
+                pos += chunk
+            }
+            return true
+        }
+
+        var cursor: UInt64 = 0
+        for r in regions {
+            let start = UInt64(r.cryptoff), end = start + UInt64(r.cryptsize)
+            if start < cursor { continue }          // 重叠/乱序，跳过
+            guard copyRange(from: cursor, to: start) else { return false }
+            guard let dec = vmRead(task: task, address: loadAddress + start, size: Int(r.cryptsize)),
+                  dec.count == Int(r.cryptsize) else { return false }
+            dst.write(dec)
+            cursor = end
+        }
+        guard copyRange(from: cursor, to: fileSize) else { return false }
+
+        // 所有 cryptid 清零
+        for e in encs where e.loadCommandAddr > 0 {
+            let cmdOff = e.loadCommandAddr - loadAddress
+            try? dst.seek(toOffset: cmdOff + 16)
+            dst.write(Data([0, 0, 0, 0]))
+        }
+        try? dst.synchronize()
+        return true
+    }
+
     // MARK: 重建解密镜像
 
     /// 读源文件 [0,cryptoff) + 从进程内存读解密段 + 读源文件尾部 + 清 cryptid
@@ -393,14 +479,24 @@ enum DecryptEngine {
         guard let loadAddr else {
             return .failed(0, "dyld image table did not find \(sourcePath): \(diag ?? "unknown reason")")
         }
-        guard let enc = readEncryptionInfo(task: task, loadAddress: loadAddr) else {
+        let encs = readEncryptionInfos(task: task, loadAddress: loadAddr)
+        guard !encs.isEmpty else {
             return .failed(0, "failed to read Mach-O load commands (parse may be abnormal)")
         }
-        if enc.cryptid == 0 {
+        if encs.allSatisfy({ $0.cryptid == 0 }) {
             return .notEncrypted
         }
-        guard rebuildDecryptedImage(sourcePath: sourcePath, task: task, loadAddress: loadAddr,
-                                    enc: enc, outputPath: outputPath) else {
+        let encrypted = encs.filter { $0.cryptid != 0 && $0.cryptsize > 0 }
+        let ok: Bool
+        if encrypted.count <= 1, let enc = encrypted.first {
+            ok = rebuildDecryptedImage(sourcePath: sourcePath, task: task, loadAddress: loadAddr,
+                                       enc: enc, outputPath: outputPath)
+        } else {
+            // v6.6.25：多段加密（拆分加密的包）逐段 dump
+            ok = rebuildDecryptedImageMulti(sourcePath: sourcePath, task: task, loadAddress: loadAddr,
+                                            encs: encs, outputPath: outputPath)
+        }
+        guard ok else {
             return .failed(0, "rebuild decrypted image failed (memory read or file write error)")
         }
         return .ok
