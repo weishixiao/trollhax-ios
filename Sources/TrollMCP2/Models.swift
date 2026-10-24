@@ -1761,6 +1761,31 @@ final class ConversationStore: ObservableObject {
             self.trailStep(.done(.result, call.name,
                                  detail: "❌ \(err.localizedDescription.prefix(200))",
                                  ok: false))
+            // v6.6.21：熔断触发 → 终止本轮，不再把控制权交回模型。
+            // 旧行为只是把"已停止本次调用"当普通工具结果喂回去，
+            // 模型会继续同样参数重试（真机连续 13 次），用户只能干等。
+            if ToolRegistry.abortRunRequested {
+                ToolRegistry.abortRunRequested = false
+                self.isLoading = false
+                self.statusText = nil
+                self.runningTool = nil
+                self.currentClient?.cancel()
+                self.currentClient = nil
+                TaskNotify.shared.endBackground()
+                var stopMsg = ChatMessage(role: "assistant",
+                    content: "已停止：\(call.name) 用相同参数连续失败，原因相同，我不再重复它。\n\n"
+                           + "下一步给你三个选择：\n"
+                           + "① 换工具/换参数（告诉我你想拿到什么结果，我换一种方式）\n"
+                           + "② 我先解释这个错误意味着什么\n"
+                           + "③ 先修环境（比如 iSH 引擎、登录状态）再继续")
+                stopMsg.thinking = nil
+                self.appendToCurrent(stopMsg)
+                self.liveProducedID = stopMsg.id
+                self.activeConvId = nil
+                self.liveTrail = []
+                self.sortAndSave()
+                return
+            }
             self.processToolCalls(calls, index: index + 1, toolMessages: next, newlyDisclosed: newlyDisclosed,
                                   config: config, tools: tools, disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel,
                                   thinkText: thinkText)

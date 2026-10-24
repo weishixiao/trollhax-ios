@@ -224,6 +224,8 @@ enum FailureKind {
 // MARK: - 注册表
 
 public final class ToolRegistry: ObservableObject {
+    /// v6.6.21：熔断触发后置位，ConversationStore 消费后终止本次 run
+    static var abortRunRequested = false
     public static let shared = ToolRegistry()
 
     private var tools: [String: MCPTool] = [:]
@@ -284,8 +286,14 @@ public final class ToolRegistry: ObservableObject {
         let passed = keys.isEmpty ? "(无)" : keys.joined(separator: ", ")
         let signature = ToolParamHelp.errorSignature(errorMessage)
 
+        // v6.6.21：熔断必须真的结束本轮 run。
+        // 实测：只返回一段"已停止本次调用"的文案，模型会把它当成又一条工具结果，
+        // 继续用同样参数重试（真机连续 13 次）。这里置一个一次性标志，
+        // 由 ConversationStore 在错误分支消费并终止循环。
+        ToolRegistry.abortRunRequested = true
+
         var lines: [String] = []
-        lines.append("🚫 已连续 \(count) 次用相同参数调用 \(tool)，错误都是同一类（\(signature)）。已停止本次调用。")
+        lines.append("🚫 已连续 \(count) 次用相同参数调用 \(tool)，错误都是同一类（\(signature)）。本次运行已终止。")
         lines.append("你传的参数: [\(passed)]")
         lines.append("错误原文: \(errorMessage.prefix(300))")
         lines.append("")

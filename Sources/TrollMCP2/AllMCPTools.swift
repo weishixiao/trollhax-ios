@@ -943,6 +943,15 @@ final class InjectionExecTool: MCPTool {
             guard let bundleId = params["bundle_id"] as? String else {
                 throw MCPError.invalidParams("bundle_id required")
             }
+            // v6.6.21：iOS 17+ 直接拒绝，不再让模型试到熔断。
+            // probe_inspect 依赖 opainject / ct_bypass 的内存注入，17 起被系统封堵；
+            // 真机上模型拿同一参数连试 13 次才被熔断。
+            if #available(iOS 17.0, *) {
+                throw MCPError.classified(
+                    "probe_inspect 在 iOS 17+ 不可用：它依赖 opainject/ct_bypass 的内存注入，系统已封堵（与包、权限无关）。",
+                    code: "UNSUPPORTED_ON_IOS17", reason: "environment",
+                    nextStep: "改用 inject binary_symbols（静态提类/方法/字符串，不需要运行目标 App），或 app.decrypt 后离线分析；不要重复本命令")
+            }
             // v4.3.11: 透传 query/class_name/prefix——之前只传bundle_id丢查询参数
             var probeP: [String: Any] = ["bundle_id": bundleId]
             if let q = params["query"] as? String { probeP["query"] = q }
