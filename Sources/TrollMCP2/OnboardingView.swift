@@ -6,7 +6,10 @@ import UIKit
 
 struct OnboardingView: View {
     @State private var page = 0
-    private let total = 3
+    // v6.6.24：按用户要求去掉开屏前两页（欢迎 / 能力），只保留"开始使用"。
+    // 原来的 welcomePage / capabilityPage 定义保留在文件里（未引用），
+    // 需要恢复三页时把 total 改回 3 并在 TabView 里加回两行 tag 即可。
+    private let total = 1
     var onFinish: () -> Void
 
     var body: some View {
@@ -32,21 +35,21 @@ struct OnboardingView: View {
                 }
 
                 TabView(selection: $page) {
-                    welcomePage.tag(0)
-                    capabilityPage.tag(1)
-                    startPage.tag(2)
+                    startPage.tag(0)
                 }
                 .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
 
                 // 底部控制
                 VStack(spacing: 14) {
-                    // 分页点
-                    HStack(spacing: 8) {
-                        ForEach(0..<total, id: \.self) { i in
-                            Capsule()
-                                .fill(i == page ? Color.tmCyan : Color.secondary.opacity(0.3))
-                                .frame(width: i == page ? 22 : 8, height: 8)
-                                .animation(.easeInOut(duration: 0.2))   // iOS14：不用 animation(_:value:)
+                    // 分页点（单页时无意义，隐藏）
+                    if total > 1 {
+                        HStack(spacing: 8) {
+                            ForEach(0..<total, id: \.self) { i in
+                                Capsule()
+                                    .fill(i == page ? Color.tmCyan : Color.secondary.opacity(0.3))
+                                    .frame(width: i == page ? 22 : 8, height: 8)
+                                    .animation(.easeInOut(duration: 0.2))   // iOS14：不用 animation(_:value:)
+                            }
                         }
                     }
 
