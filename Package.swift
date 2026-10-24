@@ -169,6 +169,8 @@ let package = Package(
             exclude: ["Resources"],
             linkerSettings: [
                 .linkedLibrary("z"),
+                // v6.6.22：db 工具进程内读库（不依赖 Alpine 的 sqlite3）
+                .linkedLibrary("sqlite3"),
                 .linkedFramework("NetworkExtension"),
                 // v4.5.2：桌面悬浮 HUD 单可执行双模式（TrollSpeed 正解）——链接 libHUD.a
                 //（HUD/sources 编出的 ObjC++ 悬浮核心）+ 私有 framework tbd（HUD/libraries）。

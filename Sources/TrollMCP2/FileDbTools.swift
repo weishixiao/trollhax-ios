@@ -135,10 +135,10 @@ final class FileExecTool: MCPTool {
 final class DbExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "db",
-        summary: "SQLite 分析 (auto-bind iOS .db 进 Alpine 跑 sqlite3). Subcommands: list / schema / query. list=表名; schema=CREATE语句; query=跑SQL SELECT. REQUIRED: path; query 需 sql. Use for: 查看/查询 iOS 上的 .db(微信/支付宝等); 改 schema/data 别用本工具.",
+        summary: "SQLite 分析（进程内 libsqlite3 只读；失败才回退 Alpine）。 Subcommands: list / schema / query. list=表名; schema=CREATE语句; query=跑SQL SELECT. REQUIRED: path; query 需 sql. Use for: 查看/查询 iOS 上的 .db(微信/支付宝等); 改 schema/data 别用本工具.",
         parameters: [
             "command": "Subcommand (required): list / schema / query",
-            "path": "iOS absolute db path (required, auto-bind Alpine reads directly)",
+            "path": "iOS absolute db path (required)",
             "sql": "SQL for query (required when command=query)"
         ], verified: true, category: "data")
 
@@ -154,9 +154,12 @@ final class DbExecTool: MCPTool {
         guard fm.fileExists(atPath: norm) else { throw MCPError.failed("db: no such file \(norm)") }
         switch command {
         case "list":
+            // v6.6.22：原生优先——iSH 坏掉时 db 依然可用（跨 App 读库是常用取证步骤）
+            if let r = nativeQuery(norm, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") { return r }
             let out = ISHEngine.exec("sqlite3 '\(norm)' \".tables\"", timeout: 60)
             return ["env": "alpine", "exit_code": Int(out.exitCode), "output": out.output]
         case "schema":
+            if let r = nativeQuery(norm, "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name") { return r }
             let out = ISHEngine.exec("sqlite3 '\(norm)' \".schema\"", timeout: 60)
             return ["env": "alpine", "exit_code": Int(out.exitCode), "output": out.output]
         case "query":
@@ -166,11 +169,25 @@ final class DbExecTool: MCPTool {
             // v3.6.19h: 修复命令注入——原实现把 SQL 直接拼进 shell 双引号，单引号转义成 '"'"' 含双引号，
             // 在双引号上下文反破引号平衡，含 ;/$/` 等元字符的 SQL 可执行任意命令。改为 base64 编码 SQL
             // (仅 [A-Za-z0-9+/=] 安全字符)，Alpine 侧解码写临时文件，sqlite3 从 stdin 读，彻底绕开 shell 解析。
+            if let r = nativeQuery(norm, sql) { return r }
             let b64 = Data(sql.utf8).base64EncodedString()
             let out = ISHEngine.exec("echo '\(b64)' | base64 -d > /tmp/_db_q.sql; sqlite3 -header -column '\(norm)' < /tmp/_db_q.sql", timeout: 90)
             return ["env": "alpine", "exit_code": Int(out.exitCode), "output": out.output]
         default:
             throw MCPError.invalidParams("Unknown command: \(command). Available: list / schema / query")
         }
+    }
+
+    /// v6.6.22：进程内 libsqlite3 只读查询；失败返回 nil 交给 Alpine 兜底
+    private func nativeQuery(_ path: String, _ sql: String) -> [String: Any]? {
+        let (results, err) = NativeSQLite.run(path: path, sql: sql)
+        if let err = err {
+            ShellDiag.log("db native failed: \(err) path=\(path)")
+            return nil
+        }
+        return ["env": "native", "exit_code": 0,
+                "sqlite": "in-process libsqlite3（WAL 快照拷贝 + query_only）",
+                "row_count": results.reduce(0) { $0 + $1.rows.count },
+                "output": NativeSQLite.render(results)]
     }
 }
