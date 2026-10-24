@@ -114,7 +114,45 @@ enum SystemCleanupEngine {
         items.append(SystemCleanupItem(id: "safari", label: "Safari 缓存",
             detail: "Safari 网页缓存（不删书签/历史）",
             paths: ["/var/mobile/Library/Caches/com.apple.mobilesafari"], risk: .safe, size: safari))
+
+        // v6.6.23：对齐「法克工具箱」里几项 TrollHax 缺的清理类别
+        let mailDirs = mailAttachmentDirs()
+        items.append(SystemCleanupItem(id: "mail_attachments", label: "邮件附件",
+            detail: "Mail 已下载的附件（邮件正文/账号不受影响）",
+            paths: mailDirs, risk: .warn,
+            size: mailDirs.reduce(0) { $0 + dirSize($1) }))
+        items.append(SystemCleanupItem(id: "sms_attachments", label: "短信附件",
+            detail: "/var/mobile/Library/SMS/Attachments（照片/视频/语音）",
+            paths: ["/var/mobile/Library/SMS/Attachments"], risk: .warn,
+            size: dirSize("/var/mobile/Library/SMS/Attachments")))
+        items.append(SystemCleanupItem(id: "diagnostics", label: "诊断与崩溃数据",
+            detail: "Analytics + CrashReporter 日志（排障后才清）",
+            paths: ["/var/mobile/Library/Logs/CrashReporter", "/var/mobile/Library/Analytics"],
+            risk: .safe,
+            size: dirSize("/var/mobile/Library/Logs/CrashReporter") + dirSize("/var/mobile/Library/Analytics")))
         return items
+    }
+
+    /// v6.6.23：邮件附件目录（iOS 各版本布局不同，统一按 "…/Attachments" 找）
+    static func mailAttachmentDirs() -> [String] {
+        let fm = FileManager.default
+        var out: [String] = []
+        let roots = ["/var/mobile/Library/Mail"]
+        for root in roots {
+            guard let en = fm.enumerator(atPath: root) else { continue }
+            var depthGuard = 0
+            while let rel = en.nextObject() as? String {
+                depthGuard += 1
+                if depthGuard > 20000 { break }
+                guard rel.hasSuffix("Attachments") else { continue }
+                var isDir: ObjCBool = false
+                let full = root + "/" + rel
+                if fm.fileExists(atPath: full, isDirectory: &isDir), isDir.boolValue {
+                    out.append(full)
+                }
+            }
+        }
+        return out
     }
 
     // MARK: 执行清理
