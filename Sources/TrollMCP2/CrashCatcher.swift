@@ -205,11 +205,18 @@ enum CrashCatcher {
                 let addr: UInt = info.map { UInt(bitPattern: $0.pointee.si_addr) } ?? 0
                 // v6.9.6：崩溃瞬间的 pc（arm64 thread state 第 32 个 u64，x0-x28/fp/lr/sp/pc/cpsr），
                 // 纯指针运算，不调任何库函数——signal-safe。取不到就写 0。
+                // 注意：本 SDK 把 ucontext 声明成 UnsafeMutableRawPointer?，不能直接取 .pointee，
+                // 因此按 AArch64 Darwin ABI 的固定布局用裸偏移读，不依赖结构体成员名：
+                //   ucontext_t: uc_onstack(4) uc_sigmask(4) uc_stack(ssize_t x3 = 24) uc_link(8)
+                //               uc_mcsize(8) uc_mcontext(8)   → uc_mcontext64 在 offset 48
+                //   __darwin_mcontext64: exception(8) error(8) __ss(= arm64 thread state)
+                //               → thread state 在 +16，第 32 个 u64 即 pc
                 var pc: UInt = 0
-                if let u = uctx, let mc = u.pointee.uc_mcontext64 {
-                    // arm64 的 thread state 是 34 个 u64 紧跟 2 字节 cpsr/填充：
-                    // [0..28]=x0-x28  [29]=fp  [30]=lr  [31]=sp  [32]=pc  [33]=cpsr
-                    pc = CrashCatcher.readArm64PC(mc, n: 32)
+                if let u = uctx {
+                    let mc = u.load(fromByteOffset: 48, as: UnsafeMutableRawPointer?.self)
+                    if let mc = mc {
+                        pc = mc.load(fromByteOffset: 16 + 32 * MemoryLayout<UInt>.size, as: UInt.self)
+                    }
                 }
                 CrashCatcher.writeSignal(sig, fault: addr, pc: pc)
             }
@@ -287,7 +294,7 @@ enum CrashCatcher {
         // v6.9.6：__TEXT.fileoff——符号表地址空间基线（真机恒为 0，模拟器/特殊构建可能非 0）
         strcpy(m, " tfo=")
         m += 5
-        m = appendHex(m, sigTextFileOff)
+        m = appendHex(m, UInt(truncatingIfNeeded: sigTextFileOff))
         // v6.9.6：崩溃瞬间 pc（ucontext）。它与 backtrace 帧 0 不是一回事：
         // 帧 0 是 handler 自己的 backtrace()，真实崩溃点要看 PC 面板或帧 1 之后的地址。
         if pc != 0 {
@@ -341,25 +348,6 @@ enum CrashCatcher {
         signal(s, SIG_DFL)
         inHandler = 0
         raise(s)
-    }
-
-    /// v6.9.6：从 __darwin_mcontext64 读到对应于 arm64 thread state 的第 n 个 u64 寄存器。
-    /// 这里不知道 mcontext64 里 thread state 的精确成员名（不同 SDK 版本不同），
-    /// 所以按"结构体内存里第一个 8 字节对齐的 UInt 数组"来读——arm64 下 __ss 就是
-    /// x0..x28/fp/lr/sp/pc/cpsr 连排，offset 0 起即为 x0。
-    /// 纯指针读取，无库调用，handler 内可用；读不到返回 0。
-    @inline(__always)
-    private static func readArm64PC(_ mc: __darwin_mcontext64, n: Int) -> UInt {
-        var out: UInt = 0
-        withUnsafePointer(to: mc) { base -> Void in
-            let raw = UnsafeRawPointer(base)
-            // 防御：n 越界（thread state 只有 34 个槽）直接放弃，读不到总比读飞强
-            guard n >= 0, n < 34 else { return }
-            let p = raw.advanced(by: n * MemoryLayout<UInt>.size)
-                .assumingMemoryBound(to: UInt.self)
-            out = p.pointee
-        }
-        return out
     }
 
     /// 手写 UInt→hex ASCII 追加到 p（signal-safe：纯算术、无字符串，零 Swift 运行时）

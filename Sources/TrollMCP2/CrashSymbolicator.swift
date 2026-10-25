@@ -170,7 +170,7 @@ enum MachOReader {
     /// v6.9.6：只读头部 + load commands（主二进制可能 200MB+，install() 时不能整文件 mmap）。
     /// 只取 UUID / __TEXT 段 / LC_SYMTAB 位置，不解析符号表。
     static func header(_ path: String) -> MachOFacts? {
-        guard let fh = FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
+        guard let fh = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
         defer { try? fh.close() }
         // 4MB 足以覆盖 fat header + 全部 load commands（实测主二进制 sizeofcmds < 100KB）
         guard let data = try? fh.read(upToCount: 4 * 1024 * 1024), data.count >= 32 else { return nil }
