@@ -202,7 +202,8 @@ public final class RemoteAgent: ObservableObject {
         let fm = FileManager.default
         let files = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
         let reported = Set(defaults.stringArray(forKey: "remote_agent_reported_crashes") ?? [])
-        var pending = files.filter { $0.hasPrefix("sig_") || $0.hasPrefix("exc_") }
+        // sig_exc_* 是 exc_* 同一现场的裸地址副本，不重复上报
+        var pending = files.filter { ($0.hasPrefix("sig_") && !$0.hasPrefix("sig_exc_")) || $0.hasPrefix("exc_") }
             .filter { !reported.contains($0) }
             .sorted()
         guard !pending.isEmpty else { return }

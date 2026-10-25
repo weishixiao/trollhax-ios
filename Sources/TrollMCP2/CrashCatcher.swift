@@ -14,7 +14,9 @@ enum CrashCatcher {
     private static var sigPathBuf: UnsafeMutablePointer<CChar>?
     private static var sigMsgBuf: UnsafeMutablePointer<CChar>?
     private static let sigPathCap = 1024
-    private static let sigMsgCap = 256   // v6.2.8：头行新增 slide 字段，扩容防溢出
+    // v6.9.6：头行再加 uuid= / tfo= / pc= 三个字段（uuid 32 + tfo 18 + pc 18 + 键名），
+    // 256 不够，扩到 512 防截断（截断会让 uuid 半个字段，反而更难排查）。
+    private static let sigMsgCap = 512
     /// v6.2.2：backtrace 帧缓冲也预分配——旧版在信号处理器内每次 allocate，
     /// 而 malloc 非 async-signal-safe，崩溃现场堆已损坏时 allocate 可能二次段错误，
     /// 导致日志只写了一半/为空（实测"最新的三次日志全部为空"）。
@@ -54,6 +56,14 @@ enum CrashCatcher {
     private static let sigNameCap = 16
     private static let sigSlotCount = 7
     private static var sigNameTable: UnsafeMutablePointer<CChar>?
+
+    /// v6.9.6：主镜像 LC_UUID 的 32 位小写 hex（install() 正常上下文从 Mach-O 直接读，
+    /// handler 内只做 memcpy）。没有它，事后无法判断崩溃日志属于哪一份二进制/dSYM，
+    /// 也就没法把裸帧地址交给 symbolize（CrashSymbolicator）准确定位函数。
+    private static var sigUUID = [CChar](repeating: 0, count: 33)
+    /// v6.9.6：__TEXT.fileoff（符号空间换算基线，handler 内写进头行便于离线核对）
+    private static var sigTextFileOff: UInt64 = 0
+    private static var sigHasUUID = false
 
     private static func sigSlot(_ s: Int32) -> Int {
         switch s {
@@ -125,6 +135,20 @@ enum CrashCatcher {
             }
             sigNameTable = tbl
         }
+        // v6.9.6：预取主镜像 LC_UUID 与 __TEXT.fileoff——只在正常上下文做一次，
+        // handler 里只 memcpy 32 字节，不碰 Swift 运行时/文件 IO。
+        if let exe = Bundle.main.executablePath, let facts = MachOReader.header(exe) {
+            sigTextFileOff = facts.textFileOff
+            if let u = facts.uuid, u.count == 32 {
+                var ui = 0
+                for ch in u.utf8 where ui < 32 {
+                    sigUUID[ui] = CChar(bitPattern: ch)
+                    ui += 1
+                }
+                sigUUID[32] = 0
+                sigHasUUID = true
+            }
+        }
 
         // 1) ObjC 未捕获异常（Swift fatalError / 强解包 / 数组越界等走这里）
         NSSetUncaughtExceptionHandler { exception in
@@ -141,6 +165,31 @@ enum CrashCatcher {
             lines += exception.callStackSymbols
             let path = "\(dir)/exc_\(ts).txt"
             try? lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+
+            // v6.9.6：同一现场再落一份可符号化的记录。
+            // callStackSymbols 的文本在对端用 `模块 0x地址 符号 + 偏移` 的形式，机器解析脆弱；
+            // 这里把地址抽出来配上 UUID 与基址，交给 CrashSymbolicator 走同一条符号化链路。
+            var addrs: [UInt64] = []
+            for line in exception.callStackSymbols {
+                guard let r = line.range(of: "0x") else { continue }
+                let tail = line[r.lowerBound...].prefix(while: { $0 != " " && $0 != "\t" })
+                if let v = UInt64(tail.dropFirst(2), radix: 16), v != 0 { addrs.append(v) }
+            }
+            let uuidStr = sigHasUUID ? String(cString: sigUUID) : nil
+            let verStr = sigVersionBuf.map { String(cString: $0) }
+            _ = CrashSymbolicator.writeRecord(
+                signal: "OBJC_EXCEPTION",
+                fault: 0,
+                base: UInt64(bitPattern: Int64(sigImageBase)),
+                pc: 0,
+                uuid: uuidStr,
+                version: verStr,
+                ish: sigIshFlag == 49,
+                frames: addrs,
+                into: CrashCatcher.crashDir,
+                prefix: "sig_exc",
+                timestamp: ts
+            )
         }
 
         // 2) POSIX 信号（EXC_BAD_ACCESS 等内存错误走这里）——handler 只做 signal-safe 的最小写盘
@@ -151,10 +200,18 @@ enum CrashCatcher {
         // backtrace 改用裸帧 hex 手写输出（零符号化、纯算术、signal-safe）。
         func arm(_ sig: Int32) {
             var sa = sigaction()
-            sa.__sigaction_u.__sa_sigaction = { sig, info, _ in
+            sa.__sigaction_u.__sa_sigaction = { sig, info, uctx in
                 // 让编译器从属性类型推断参数类型，避免 SDK 版本间 __siginfo_t/__ucontext 命名差异
                 let addr: UInt = info.map { UInt(bitPattern: $0.pointee.si_addr) } ?? 0
-                CrashCatcher.writeSignal(sig, fault: addr)
+                // v6.9.6：崩溃瞬间的 pc（arm64 thread state 第 32 个 u64，x0-x28/fp/lr/sp/pc/cpsr），
+                // 纯指针运算，不调任何库函数——signal-safe。取不到就写 0。
+                var pc: UInt = 0
+                if let u = uctx, let mc = u.pointee.uc_mcontext64 {
+                    // arm64 的 thread state 是 34 个 u64 紧跟 2 字节 cpsr/填充：
+                    // [0..28]=x0-x28  [29]=fp  [30]=lr  [31]=sp  [32]=pc  [33]=cpsr
+                    pc = CrashCatcher.readArm64PC(mc, n: 32)
+                }
+                CrashCatcher.writeSignal(sig, fault: addr, pc: pc)
             }
             sa.sa_flags = SA_SIGINFO
             sigemptyset(&sa.sa_mask)
@@ -176,7 +233,7 @@ enum CrashCatcher {
     /// v6.2.4：① 接收 si_addr 崩溃地址，头行先写崩溃地址并立即 write（先落盘留痕，
     /// 后续动作即使二次崩溃，头行已保存）；② 弃用 backtrace_symbols_fd（符号化器在
     /// iSH 线程栈上读 guest 地址会二次段错误），改手写 hex 输出裸帧地址。
-    private static func writeSignal(_ s: Int32, fault: UInt) {
+    private static func writeSignal(_ s: Int32, fault: UInt, pc: UInt = 0) {
         // v6.2.4：重入保护——若 backtrace 遍历异常栈二次崩溃引发信号重入，
         // 直接恢复默认处理并重发（不再写盘），避免无限递归
         if OSAtomicCompareAndSwap32(0, 1, &inHandler) == false {
@@ -227,6 +284,28 @@ enum CrashCatcher {
         strcpy(m, " base=")
         m += 6
         m = appendHex(m, UInt(bitPattern: sigImageBase))
+        // v6.9.6：__TEXT.fileoff——符号表地址空间基线（真机恒为 0，模拟器/特殊构建可能非 0）
+        strcpy(m, " tfo=")
+        m += 5
+        m = appendHex(m, sigTextFileOff)
+        // v6.9.6：崩溃瞬间 pc（ucontext）。它与 backtrace 帧 0 不是一回事：
+        // 帧 0 是 handler 自己的 backtrace()，真实崩溃点要看 PC 面板或帧 1 之后的地址。
+        if pc != 0 {
+            strcpy(m, " pc=")
+            m += 4
+            m = appendHex(m, pc)
+        }
+        // v6.9.6：主镜像 UUID——符号化的唯一凭据（dSYM 校验、区分构建版本）
+        if sigHasUUID {
+            strcpy(m, " uuid=")
+            m += 6
+            sigUUID.withUnsafeBufferPointer { buf in
+                if let base = buf.baseAddress {
+                    strcpy(m, base)
+                    m += strlen(base)
+                }
+            }
+        }
         // v6.6.0：写出构建版本与引擎开关状态（排障关键：区分构建代次 / 是否开了 iSH）
         // v6.6.9：版本/开关均由 install() 预缓存，handler 内零 Swift 运行时访问
         strcpy(m, " ver=")
@@ -262,6 +341,25 @@ enum CrashCatcher {
         signal(s, SIG_DFL)
         inHandler = 0
         raise(s)
+    }
+
+    /// v6.9.6：从 __darwin_mcontext64 读到对应于 arm64 thread state 的第 n 个 u64 寄存器。
+    /// 这里不知道 mcontext64 里 thread state 的精确成员名（不同 SDK 版本不同），
+    /// 所以按"结构体内存里第一个 8 字节对齐的 UInt 数组"来读——arm64 下 __ss 就是
+    /// x0..x28/fp/lr/sp/pc/cpsr 连排，offset 0 起即为 x0。
+    /// 纯指针读取，无库调用，handler 内可用；读不到返回 0。
+    @inline(__always)
+    private static func readArm64PC(_ mc: __darwin_mcontext64, n: Int) -> UInt {
+        var out: UInt = 0
+        withUnsafePointer(to: mc) { base -> Void in
+            let raw = UnsafeRawPointer(base)
+            // 防御：n 越界（thread state 只有 34 个槽）直接放弃，读不到总比读飞强
+            guard n >= 0, n < 34 else { return }
+            let p = raw.advanced(by: n * MemoryLayout<UInt>.size)
+                .assumingMemoryBound(to: UInt.self)
+            out = p.pointee
+        }
+        return out
     }
 
     /// 手写 UInt→hex ASCII 追加到 p（signal-safe：纯算术、无字符串，零 Swift 运行时）

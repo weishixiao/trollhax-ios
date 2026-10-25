@@ -140,34 +140,139 @@ final class DiagnoseStartupTool: MCPTool {
 final class DiagnoseCrashTool: MCPTool {
     let definition = ToolDefinition(
         name: "diagnose.crash",
-        summary: "Analyze app crash logs to find root cause. Use for: app keeps crashing, find out why. Don't use for: read raw crash log (use shell.exec), diagnose startup failure (use diagnose.startup). Example: user says '小红书 keeps crashing, why' → analyze crash.",
+        summary: "Analyze crash logs and symbolicate raw frame addresses into function names. Reads both system CrashReporter reports and the app's own CrashCatcher logs (Workspace/crash). Use for: app keeps crashing, find out why, locate the exact function a crash happened in, TrollHax itself闪退. Don't use for: read raw crash log (use shell.exec), diagnose startup failure (use diagnose.startup). Example: user says '小红书 keeps crashing, why' → analyze crash; user says '崩溃日志里这串地址是什么函数' → symbolize.",
         parameters: [
-            "bundle_id": "Target App bundle ID (required)",
-            "count": "How many recent crashes to analyze (default 1)"
+            "bundle_id": "Target App bundle ID (optional; omit to analyze this app's own CrashCatcher logs)",
+            "count": "How many recent crashes to analyze (default 1, max 20)",
+            "dsym": "Optional dSYM path (.app.dSYM dir or the DWARF file). Improves symbol accuracy for stripped binaries",
+            "symbolicate": "Symbolicate CrashCatcher frames (default true)"
         ],
     verified: true, category: "diagnose")
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let bundleId = params["bundle_id"] as? String, !bundleId.isEmpty else {
-            throw MCPError.invalidParams("bundle_id required")
-        }
-        let count = (params["count"] as? Int) ?? 1
+        let bundleId = (params["bundle_id"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        let count = max(1, min((params["count"] as? Int) ?? 1, 20))
+        let wantSymbols = (params["symbolicate"] as? Bool) ?? true
+        let dsymParam = params["dsym"] as? String
 
+        var result: [String: Any] = [:]
+        if !bundleId.isEmpty { result["bundle_id"] = bundleId }
+
+        // ---- 1) CrashCatcher 自身的 sig_/exc_ 日志（Workspace/crash）----
+        // v6.9.6：旧实现只读 CrashReporter，完全看不到 CrashCatcher 落盘的裸帧地址，
+        // 于是"有日志但定位不到函数"。现在把两边都读，并对 sig_ 日志做符号化。
+        let own = analyzeCrashCatcherLogs(count: count, dsymPaths: dsymParam.map { [$0] } ?? [],
+                                          wantSymbols: wantSymbols)
+        if !own.isEmpty { result["crash_catcher"] = own }
+
+        // ---- 2) 系统 CrashReporter（第三方 App 的 .ips/.crash）----
+        var analyses: [[String: Any]] = []
+        if !bundleId.isEmpty {
+            analyses = analyzeSystemReports(bundleId: bundleId, count: count)
+        }
+
+        if analyses.isEmpty && own.isEmpty {
+            result["result"] = bundleId.isEmpty
+                ? "no crash log found (Workspace/crash 为空，系统 CrashReporter 也未指定 bundle_id)"
+                : "no crash log found"
+            result["hint"] = bundleId.isEmpty
+                ? "带上 bundle_id 可分析其他 App 的系统崩溃报告；或先触发一次崩溃让 CrashCatcher 落盘"
+                : "确认 bundle_id 正确，或改用 diagnose.crash 不带 bundle_id 分析本 App 自身日志"
+            return result
+        }
+
+        if !analyses.isEmpty {
+            result["crash_count"] = analyses.count
+            result["analyses"] = analyses
+        }
+
+        // 汇总：把符号化命中的函数提到顶层，AI 不必自己翻嵌套结构
+        if wantSymbols, let tops = result["crash_catcher"] as? [[String: Any]], let first = tops.first {
+            result["top_frames"] = first["frames"] ?? []
+            result["next_step"] = "按 top_frames 里的 function 定位代码；偏移 = function 起点 + symbol_offset"
+        }
+        return result
+    }
+    // MARK: - CrashCatcher 日志符号化
+
+    /// 读 Workspace/crash 下最新的 sig_/exc_ 日志。sig_ 会做符号化（地址 → 函数名），
+    /// exc_ 是 ObjC 未捕获异常，调用栈本来就是符号化的，只摘关键行。
+    private func analyzeCrashCatcherLogs(count: Int, dsymPaths: [String], wantSymbols: Bool) -> [[String: Any]] {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: CrashCatcher.crashDir, includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return [] }
+
+        let sorted = files
+            .filter { $0.pathExtension == "txt" }
+            .sorted { l, r in
+                let lv = (try? l.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let rv = (try? r.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return lv > rv
+            }
+            .prefix(count)
+
+        var out: [[String: Any]] = []
+        for url in sorted {
+            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            var item: [String: Any] = ["file": url.lastPathComponent, "size": text.utf8.count]
+
+            // exc_*：ObjC 异常文本；sig_exc_*：同一现场的裸地址记录（走下面的符号化分支）
+            if url.lastPathComponent.hasPrefix("exc_") {
+                // ObjC 异常：name / reason / 前 8 行调用栈（已是符号名，不需再解析）
+                let lines = text.components(separatedBy: .newlines)
+                item["kind"] = "uncaught_exception"
+                for line in lines {
+                    if line.hasPrefix("name:") { item["exception_name"] = line.replacingOccurrences(of: "name:", with: "").trimmingCharacters(in: .whitespaces) }
+                    if line.hasPrefix("reason:") { item["reason"] = line.replacingOccurrences(of: "reason:", with: "").trimmingCharacters(in: .whitespaces) }
+                }
+                item["stack_top8"] = lines.filter { $0.contains("0x") }.prefix(8).map { $0.trimmingCharacters(in: .whitespaces) }
+                out.append(item)
+                continue
+            }
+
+            item["kind"] = "signal"
+            guard let rec = CrashRecord.parse(text: text, path: url.path) else {
+                item["parse_error"] = "日志头行无法解析"
+                out.append(item)
+                continue
+            }
+            item["signal"] = rec.signal ?? "?"
+            item["frame_count"] = rec.frames.count
+            if let b = rec.base { item["base"] = SymbolicatedHelpers.hex(b) }
+            if let f = rec.fault { item["fault"] = SymbolicatedHelpers.hex(f) }
+            if let v = rec.version { item["app_version"] = v }
+            if let i = rec.ish { item["alpine_enabled"] = i }
+            if let ts = rec.timestamp { item["crashed_at"] = ISO8601DateFormatter().string(from: ts) }
+            if let u = rec.uuid { item["uuid"] = CrashSymbolicator.formattedUUID(u) }
+
+            guard wantSymbols else {
+                item["raw_frames"] = rec.frames.prefix(24).map { SymbolicatedHelpers.hex($0) }
+                out.append(item)
+                continue
+            }
+            let sym = CrashSymbolicator.symbolicate(record: rec, dsymPaths: dsymPaths, limit: 32)
+            let json = sym.asJSON()
+            item["uuid_match"] = json["uuid_match"] ?? "unknown"
+            item["image"] = json["image"] ?? [:]
+            item["frames"] = json["frames"] ?? []
+            item["symbols_ok"] = json["ok"] ?? false
+            let notes = (json["notes"] as? [String]) ?? []
+            if !notes.isEmpty { item["notes"] = notes }
+            out.append(item)
+        }
+        return out
+    }
+
+    // MARK: - 系统 CrashReporter 报告
+
+    private func analyzeSystemReports(bundleId: String, count: Int) -> [[String: Any]] {
         let crashDir = NSHomeDirectory().appending("/Library/Logs/CrashReporter")
-        guard let files = try? FileManager.default.contentsOfDirectory(atPath: crashDir) else {
-            return ["error": "cannot access crash log directory"]
-        }
-
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: crashDir) else { return [] }
         let relevant = files.filter { $0.contains(bundleId) }.sorted().suffix(count)
-        guard !relevant.isEmpty else {
-            return ["bundle_id": bundleId, "result": "no crash log found"]
-        }
-
         var analyses: [[String: Any]] = []
         for file in relevant {
             let path = crashDir.appending("/\(file)")
             guard let content = try? String(contentsOfFile: path) else { continue }
-
             var analysis: [String: Any] = ["file": file]
             let lines = content.components(separatedBy: .newlines)
 
@@ -229,12 +334,7 @@ final class DiagnoseCrashTool: MCPTool {
 
             analyses.append(analysis)
         }
-
-        return [
-            "bundle_id": bundleId,
-            "crash_count": analyses.count,
-            "analyses": analyses
-        ]
+        return analyses
     }
 }
 
