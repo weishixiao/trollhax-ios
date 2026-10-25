@@ -137,17 +137,11 @@ struct HaxComputerView: View {
                 } label: {
                     Label("浏览 iOS 工作区", systemImage: "internaldrive")
                 }
-
-                NavigationLink {
-                    RootfsManagementView()
-                } label: {
-                    Label("Rootfs 管理（镜像源 / DNS / 重置）", systemImage: "shippingbox")
-                }
             } header: {
                 Text("文件")
             }
 
-            // MARK: 镜像源（v6.6.14：从 Rootfs 管理合并过来，两页能力对齐）
+            // MARK: 镜像源（v6.6.14：从 Rootfs 管理合并过来；v6.9.13 起 Rootfs 页已删除，这里是唯一入口）
             Section {
                 Menu {
                     ForEach(["USTC", "Aliyun", "Tsinghua", "Official"], id: \.self) { m in
@@ -216,19 +210,6 @@ struct HaxComputerView: View {
             } footer: {
                 Text("写 Alpine 的 /etc/resolv.conf。用代理/VPN 时建议保持「自动」。")
                     .font(.caption2)
-            }
-
-            // MARK: 性能（AOJIT 说明）
-            Section {
-                HStack {
-                    Label("AOJIT 编译加速", systemImage: "bolt.circle")
-                    Spacer()
-                    Text("不可用").foregroundColor(.secondary).font(.caption)
-                }
-                Text("OpenMinis 的 AOJIT 依赖 iSH 内核的预编译镜像子系统（镜像录制 + AOT 覆盖率），TrollHax 链接的 libish.a 未启用该特性。需要重编引擎才能支持。")
-                    .font(.caption2).foregroundColor(.secondary)
-            } header: {
-                Text("性能")
             }
 
             // MARK: 危险操作
