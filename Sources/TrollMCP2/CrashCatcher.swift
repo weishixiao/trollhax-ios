@@ -175,16 +175,23 @@ enum CrashCatcher {
                 let tail = line[r.lowerBound...].prefix(while: { $0 != " " && $0 != "\t" })
                 if let v = UInt64(tail.dropFirst(2), radix: 16), v != 0 { addrs.append(v) }
             }
-            let uuidStr = sigHasUUID ? String(cString: sigUUID) : nil
-            let verStr = sigVersionBuf.map { String(cString: $0) }
+            // 注意：NSSetUncaughtExceptionHandler 的回调是 @convention(c)，
+            // 闭包里**任何**对实例属性/局部变量的隐式引用都会触发
+            // "a C function pointer cannot be formed from a closure that captures context"。
+            // 因此这里所有静态成员都显式写成 CrashCatcher.xxx。
+            var uuidStr: String? = nil
+            if CrashCatcher.sigHasUUID {
+                uuidStr = CrashCatcher.sigUUID.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+            }
+            let verStr: String? = CrashCatcher.sigVersionBuf.map { String(cString: $0) }
             _ = CrashSymbolicator.writeRecord(
                 signal: "OBJC_EXCEPTION",
                 fault: 0,
-                base: UInt64(bitPattern: Int64(sigImageBase)),
+                base: UInt64(bitPattern: Int64(CrashCatcher.sigImageBase)),
                 pc: 0,
                 uuid: uuidStr,
                 version: verStr,
-                ish: sigIshFlag == 49,
+                ish: CrashCatcher.sigIshFlag == 49,
                 frames: addrs,
                 into: CrashCatcher.crashDir,
                 prefix: "sig_exc",
