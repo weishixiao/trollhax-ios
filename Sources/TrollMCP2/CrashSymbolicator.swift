@@ -16,6 +16,8 @@ enum CrashSymbolicator {
     private static var index: [Entry] = []
     private static var textVMAddr: UInt64 = 0
     private static var loadedUUID: String = ""
+    /// v6.6.28：dSYM 的 LC_UUID。必须与崩溃二进制一致，否则符号全错（比没有符号更危险）
+    private(set) static var uuid: String = ""
 
     static var isLoaded: Bool { !index.isEmpty }
 
@@ -29,7 +31,11 @@ enum CrashSymbolicator {
         var symoff = 0, nsyms = 0, stroff = 0
         for _ in 0..<Int(ncmds) {
             guard let cmd = u32(data, off), let size = u32(data, off + 4), size >= 8 else { break }
-            if cmd == 0x19 {                                   // LC_SEGMENT_64
+            if cmd == 0x1b {                                   // LC_UUID
+                var hex = ""
+                for i in 0..<16 { hex += String(format: "%02x", data[off + 8 + i]) }
+                uuid = hex
+            } else if cmd == 0x19 {                           // LC_SEGMENT_64
                 let name = cstr(data, off + 8, 16)
                 if name == "__TEXT" { textVMAddr = u64(data, off + 24) ?? 0 }
             } else if cmd == 0x2 {                             // LC_SYMTAB
@@ -69,7 +75,12 @@ enum CrashSymbolicator {
         return "\(e.name) + 0x" + String(loadAddr - e.addr, radix: 16)
     }
 
-    static func reset() { index = []; textVMAddr = 0; loadedUUID = "" }
+    static func reset() { index = []; textVMAddr = 0; loadedUUID = ""; uuid = "" }
+
+    /// 校验 dSYM 是否对应当前二进制（大小写不敏感）
+    static func matches(binaryUUID: String) -> Bool {
+        !uuid.isEmpty && uuid.lowercased() == binaryUUID.lowercased()
+    }
 
     // MARK: 小工具
 
