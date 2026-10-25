@@ -753,6 +753,13 @@ jobs:
             --title "TrollHax latest (v${VER})" \
             --notes "滚动构建（main 分支最新）。供 App 内多源自动更新使用：GitHub 被墙时经镜像前缀或 Releases 直链下载。下载地址：https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/TrollHax.tipa" || \
             { echo "RELEASE PUBLISH FAILED (non-fatal)"; exit 0; }
+          # v6.6.27：dSYM 随包发布——崩溃栈不再靠 base= 手工换算偏移
+          DSYM=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -name "*.app.dSYM" -type d 2>/dev/null | head -1)
+          if [ -n "$DSYM" ]; then
+            (cd "$(dirname "$DSYM")" && zip -qry /tmp/dsyms.zip "$(basename "$DSYM")" &&              gh release upload latest /tmp/dsyms.zip --clobber && echo "dSYM uploaded: $DSYM")
+          else
+            echo "no dSYM found (non-fatal)"
+          fi
 
   # v4.4.3：原生 ARM64 Python（iOS 版 CPython，PEP 730 官方构建脚本）。
   # 目的：pandas/numpy 在 iSH 模拟器里 import 必段错误闪退（崩溃栈 cpu_run_to_interrupt，
