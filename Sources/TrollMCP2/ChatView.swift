@@ -138,7 +138,7 @@ struct ChatView: View {
                         Button("取消") { exitSelection() }
                     } else {
                         HStack(spacing: 14) {
-                            Button(action: { withAnimation { ui.drawerOpen.toggle() } }) {
+                            Button(action: { withAnimation { uiState.drawerOpen.toggle() } }) {
                                 Image(systemName: "line.horizontal.3")
                                     .font(.system(size: 18, weight: .semibold))
                             }
@@ -432,7 +432,7 @@ struct ChatView: View {
             DoubaoChatHeader(title: "新对话", onBack: {
                 NotificationCenter.default.post(name: .tmOpenConversationList, object: nil)
             }, onDrawer: {
-                withAnimation { ui.drawerOpen = true }
+                withAnimation { uiState.drawerOpen = true }
             })
             Spacer()
             VStack(spacing: 16) {
@@ -1647,7 +1647,7 @@ struct DoubaoModelBar: View {
         .padding(.horizontal, 16)
         .padding(.top, 4)
         .padding(.bottom, 2)
-        .sheet(isPresented: $showPicker) { ChatModelPickerSheet() }
+        .sheet(isPresented: $showPicker) { ChatModelPickerSheet(onSelect: { _ in }) }
     }
 }
 
@@ -1734,7 +1734,7 @@ struct DoubaoChatHeader: View {
             .padding(.bottom, 4)
         }
         .sheet(isPresented: $showModelPicker) {
-            ChatModelPickerSheet()
+            ChatModelPickerSheet(onSelect: { _ in })
         }
     }
 }

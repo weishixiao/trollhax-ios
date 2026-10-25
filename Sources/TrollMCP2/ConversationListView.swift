@@ -179,6 +179,8 @@ private struct IdentifiedUUID: Identifiable {
 
 /// 列表主体（抽屉里复用：不带返回按钮，只留搜索 + 列表）
 struct ConversationListBody: View {
+    /// v6.9.14：运行中任务卡需要订阅会话运行状态，与父级共用同一个单例
+    @ObservedObject private var store = ConversationStore.shared
     var conversations: [ChatConversation]
     var selectedId: UUID?
     @Binding var searchText: String
