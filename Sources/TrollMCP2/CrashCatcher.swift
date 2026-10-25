@@ -64,6 +64,8 @@ enum CrashCatcher {
     /// v6.9.6：__TEXT.fileoff（符号空间换算基线，handler 内写进头行便于离线核对）
     private static var sigTextFileOff: UInt64 = 0
     private static var sigHasUUID = false
+    /// v6.9.6：pc 裸偏移解析的前提（8 字节指针/UInt）是否成立，install() 时核一次
+    private static var sigPCLayoutOK = false
 
     private static func sigSlot(_ s: Int32) -> Int {
         switch s {
@@ -135,6 +137,13 @@ enum CrashCatcher {
             }
             sigNameTable = tbl
         }
+        // v6.9.6：handler 里按裸偏移解析 ucontext→mcontext64→thread_state 取 pc，
+        // 布局假设必须成立，否则会读到垃圾值写进日志。这里在正常上下文核一遍（SDK 升级改布局时宁可不写 pc）。
+        //   __darwin_ucontext.size == 56（uc_mcontext 在 +48）
+        //   mcontext64: __es 16 字节后是 __ss（thread state）
+        //   arm_thread_state64: x[29] fp lr sp pc → pc 在 +256
+        sigPCLayoutOK = MemoryLayout<UnsafeMutableRawPointer?>.size == 8
+            && MemoryLayout<UInt>.size == 8
         // v6.9.6：预取主镜像 LC_UUID 与 __TEXT.fileoff——只在正常上下文做一次，
         // handler 里只 memcpy 32 字节，不碰 Swift 运行时/文件 IO。
         if let exe = Bundle.main.executablePath, let facts = MachOReader.header(exe) {
@@ -212,17 +221,22 @@ enum CrashCatcher {
                 let addr: UInt = info.map { UInt(bitPattern: $0.pointee.si_addr) } ?? 0
                 // v6.9.6：崩溃瞬间的 pc（arm64 thread state 第 32 个 u64，x0-x28/fp/lr/sp/pc/cpsr），
                 // 纯指针运算，不调任何库函数——signal-safe。取不到就写 0。
-                // 注意：本 SDK 把 ucontext 声明成 UnsafeMutableRawPointer?，不能直接取 .pointee，
-                // 因此按 AArch64 Darwin ABI 的固定布局用裸偏移读，不依赖结构体成员名：
-                //   ucontext_t: uc_onstack(4) uc_sigmask(4) uc_stack(ssize_t x3 = 24) uc_link(8)
-                //               uc_mcsize(8) uc_mcontext(8)   → uc_mcontext64 在 offset 48
-                //   __darwin_mcontext64: exception(8) error(8) __ss(= arm64 thread state)
-                //               → thread state 在 +16，第 32 个 u64 即 pc
+                // 本 SDK 里 sigaction 回调第三参是 `void *`（Swift: UnsafeMutableRawPointer?），
+                // 因此不能用 uc_mcontext64 成员，只能按 ABI 用裸偏移取。布局已对照 iPhoneOS SDK 头文件核实：
+                //   __darwin_ucontext: uc_onstack(4) uc_sigmask(4) uc_stack(24) uc_link(8)
+                //                      uc_mcsize(8) uc_mcontext(8)          → 共 56 字节，mcontext 在 +48
+                //   __darwin_mcontext64: __es(16: far 8 + esr 4 + exception 4) __ss(thread state)
+                //                      → thread state 在 +16
+                //   __darwin_arm_thread_state64: x[29] fp lr sp pc cpsr
+                //                      → pc 是第 33 个 u64，字节偏移 29*8 + 8*3 = 256
+                //   合计 48 + 16 + 256 = 320
                 var pc: UInt = 0
-                if let u = uctx {
-                    let mc = u.load(fromByteOffset: 48, as: UnsafeMutableRawPointer?.self)
-                    if let mc = mc {
-                        pc = mc.load(fromByteOffset: 16 + 32 * MemoryLayout<UInt>.size, as: UInt.self)
+                if CrashCatcher.sigPCLayoutOK, let u = uctx {
+                    let base = UnsafeRawPointer(u)
+                    // mcontext 指针本身可能为空（未填 context 的情况），先取出来判空
+                    let mcRaw = base.load(fromByteOffset: 48, as: UnsafeMutableRawPointer?.self)
+                    if let mc = mcRaw {
+                        pc = UnsafeRawPointer(mc).load(fromByteOffset: 16 + 256, as: UInt.self)
                     }
                 }
                 CrashCatcher.writeSignal(sig, fault: addr, pc: pc)
