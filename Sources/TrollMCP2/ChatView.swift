@@ -3,10 +3,44 @@ import UIKit
 import RSKGrowingTextView
 import UniformTypeIdentifiers
 
+/// v6.9.12：App 首页 = 豆包式历史对话列表；点「新对话」或某条历史进入聊天页。
+/// `chatHome` 表示已进入聊天页（false 时展示列表）。
+struct ChatRootView: View {
+    @ObservedObject private var store = ConversationStore.shared
+    @State private var chatHome = false
+
+    var body: some View {
+        Group {
+            if chatHome {
+                ChatView()
+            } else {
+                ConversationListView(
+                    onOpen: { id in
+                        store.select(id)
+                        chatHome = true
+                    },
+                    onClose: { chatHome = true }
+                )
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .tmOpenConversationList)) { _ in
+            withAnimation(.easeInOut(duration: 0.2)) { chatHome = false }
+        }
+    }
+}
+
+extension Notification.Name {
+    /// 请求回到对话列表页（聊天页左上角按钮 / 抽屉关闭后用）
+    static let tmOpenConversationList = Notification.Name("trollmcp2.openConversationList")
+    /// 请求新建对话并进入聊天页
+    static let tmNewConversation = Notification.Name("trollmcp2.newConversation")
+}
+
 struct ChatView: View {
     @ObservedObject private var store = ConversationStore.shared
     @ObservedObject private var modelStore = ModelStore.shared
     @ObservedObject private var tts = TTSService.shared
+    @ObservedObject private var uiState = AppUIState.shared
 
     @State private var inputText = ""
     @State private var inputHeight: CGFloat = 36
@@ -38,6 +72,12 @@ struct ChatView: View {
     @State private var selectedIds = Set<UUID>()
     @State private var showToast = false
     @State private var toastText = "已复制"
+
+    /// 豆包式「新对话」页：模型已配置且当前会话没有消息
+    private var isDoubaoHome: Bool {
+        !modelStore.configs.isEmpty && store.currentMessages.isEmpty && !selectionMode
+    }
+
     var body: some View {
         CompatNav {
             VStack(spacing: 0) {
@@ -45,6 +85,10 @@ struct ChatView: View {
                     emptyState
                 } else if store.currentMessages.isEmpty {
                     homeState
+                } else if #available(iOS 16.0, *) {
+                    // v6.9.13：有消息的会话页——模型切换从导航栏移到消息上方一行的胶囊里
+                    DoubaoModelBar()
+                    messageList
                 } else {
                     messageList
                 }
@@ -55,18 +99,22 @@ struct ChatView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 inputBar
             }
+            // v6.9.13（豆包风格）：空会话页隐藏导航栏——豆包新对话页是整屏大标题，
+            // 没有居中小标题；有消息的会话页仍走原来的 inline 导航栏。
+            .navigationBarHidden(isDoubaoHome)
             .navigationTitle(selectionMode ? "已选 \(selectedIds.count) 条" : store.currentTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // v3.4.3：标题 + 模型名（🟢 deepseek v4 ▽）与右侧图标放同一平行线（导航栏 principal）
                 ToolbarItem(placement: .principal) {
                     // v6.6.11：模型快速切换从右上角移到任务名下方（用户要求）
+                    // v6.9.13：iOS16+ 模型切换移到消息区顶部胶囊（DoubaoModelBar），此处只留标题
                     VStack(spacing: 1) {
                         Text(selectionMode ? "已选 \(selectedIds.count) 条" : store.currentTitle)
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .lineLimit(1)
-                        if !selectionMode {
+                        if !selectionMode, #unavailable(iOS 16.0) {
                             Button(action: { showModelPicker = true }) {
                                 HStack(spacing: 3) {
                                     Image(systemName: "circle.fill")
@@ -90,12 +138,20 @@ struct ChatView: View {
                         Button("取消") { exitSelection() }
                     } else {
                         HStack(spacing: 14) {
-                            Button(action: { withAnimation { AppUIState.shared.drawerOpen.toggle() } }) {
+                            Button(action: { withAnimation { ui.drawerOpen.toggle() } }) {
                                 Image(systemName: "line.horizontal.3")
                                     .font(.system(size: 18, weight: .semibold))
                             }
+                            // v6.9.12：返回豆包式对话列表（历史会话页）
+                            Button(action: {
+                                uiState.drawerOpen = false
+                                NotificationCenter.default.post(name: .tmOpenConversationList, object: nil)
+                            }) {
+                                Image(systemName: "bubble.left.and.bubble.right")
+                                    .font(.system(size: 17, weight: .semibold))
+                            }
                             // v6.6.8：左上角 + 号新建会话按钮用户要求再删除
-                            // （新建入口保留在侧滑抽屉头部 + 抽屉内长按管理）
+                            // （新建入口保留在侧滑抽屉头部 + 对话列表页右上角）
                         }
                     }
                 }
@@ -353,6 +409,12 @@ struct ChatView: View {
             }
             .navigationViewStyle(.stack)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .tmNewConversation)) { _ in
+            if store.selectedId == nil { store.newConversation() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .tmOpenConversationList)) { _ in
+            uiState.drawerOpen = false
+        }
         // v2.9.10：网络恢复 / 回前台提示（配合后台自动重连）
         .onReceive(NotificationCenter.default.publisher(for: AppLifecycleMonitor.networkRestored)) { _ in
             showToast("网络已恢复")
@@ -365,26 +427,141 @@ struct ChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "message.badge")
-                .font(.system(size: 48))
-                .foregroundColor(.secondary)
-            Text(L10n.t("home_empty_title"))
-                .font(.headline)
-            Text(L10n.t("home_empty_sub"))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+        // v6.9.13：未配置模型时的空态，同样带豆包式页头，免得陷在列表页出不来
+        VStack(spacing: 0) {
+            DoubaoChatHeader(title: "新对话", onBack: {
+                NotificationCenter.default.post(name: .tmOpenConversationList, object: nil)
+            }, onDrawer: {
+                withAnimation { ui.drawerOpen = true }
+            })
+            Spacer()
+            VStack(spacing: 16) {
+                Image(systemName: "message.badge")
+                    .font(.system(size: 48))
+                    .foregroundColor(.secondary)
+                Text(L10n.t("home_empty_title"))
+                    .font(.headline)
+                Text(L10n.t("home_empty_sub"))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
+            Spacer()
+            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var homeState: some View {
-        // v6.6.14：按用户要求——新会话页只保留空白。
-        // 原先的 App 图标 / 欢迎语 / 2 张主卡 / 10 张快捷卡片全部移除。
-        // 恢复方法：从 git 历史取回此方法（提交 8d59de6 之前的版本）。
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // v6.9.13（豆包风格）：新对话页 = 大标题「你好，我是 TrollHax」+ 副标题 + 两列能力卡。
+        // 页头（返回列表 / 抽屉 / 模型切换）改由 DoubaoChatHeader 承担，这里不再重复画。
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                DoubaoChatHeader(title: "新对话", onBack: {
+                    NotificationCenter.default.post(name: .tmOpenConversationList, object: nil)
+                }, onDrawer: {
+                    withAnimation { uiState.drawerOpen = true }
+                })
+
+                VStack(alignment: .leading, spacing: 8) {
+                    // 渐变文字大标题（豆包首页那句欢迎语的处理方式）
+                    Text("你好，我是 TrollHax")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(
+                            LinearGradient(colors: [Color(red: 0.42, green: 0.40, blue: 0.98),
+                                                    Color(red: 0.72, green: 0.45, blue: 1.0),
+                                                    Color(red: 1.0, green: 0.55, blue: 0.78)],
+                                           startPoint: .leading, endPoint: .trailing)
+                        )
+                    Text("描述目标就行，诊断 / 注入 / 编译 / 控制 App 交给我")
+                        .font(.system(size: 14))
+                        .foregroundColor(DoubaoTheme.subText)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DoubaoTheme.accent)
+                    Text("试试这些")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(DoubaoTheme.subText)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 22)
+                .padding(.bottom, 10)
+
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    doubaoCard("hammer.fill", "编译 tweak", "GitHub Actions 云端编译并下载注入",
+                               [.orange, .tmBrown], promptId: "developer") {
+                        runQuickPrompt("帮我在 GitHub 上编译一个测试 tweak（HelloWorld），完成后把 dylib 下载到工作区")
+                    }
+                    doubaoCard("syringe.fill", "注入验证", "列出已装应用，注入测试 dylib",
+                               [.green, .tmTeal], promptId: "reverse") {
+                        runQuickPrompt("列出本机已安装的应用，选一个测试 dylib 注入并验证加载状态")
+                    }
+                    doubaoCard("stethoscope", "环境体检", "TrollStore / 注入链 / 网络连通",
+                               [.tmCyan, .teal], promptId: "qa") {
+                        runQuickPrompt("全面检查本机环境：TrollStore、注入工具链、Entitlements 与网络连通性，输出体检报告")
+                    }
+                    doubaoCard("cursorarrow.click.2", "控制 App", "读界面树、点击输入自动化",
+                               [Color(red: 0.55, green: 0.45, blue: 0.98), .tmIndigo], promptId: "uicontrol") {
+                        runQuickPrompt("给小红书注入控制代理（ControlAgent），然后读取它的界面树")
+                    }
+                    doubaoCard("antenna.radiowaves.left.and.right", "抓包分析", "HTTP 请求清单与可疑字段",
+                               [.orange, .red], promptId: "pentester") {
+                        runQuickPrompt("对小红书做一次网络抓包分析，列出请求清单和可疑字段")
+                    }
+                    doubaoCard("terminal.fill", "Hax 电脑", "打开 Alpine 沙盒终端",
+                               [Color(red: 0.25, green: 0.30, blue: 0.38), Color(red: 0.45, green: 0.50, blue: 0.58)], promptId: nil) {
+                        showTerminal = true
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                Spacer(minLength: 30)
+            }
+        }
+    }
+
+    /// 豆包式能力卡：浅色圆角卡 + 彩色描边图标 + 标题/副标题
+    private func doubaoCard(_ icon: String, _ title: String, _ subtitle: String, _ colors: [Color],
+                            promptId: String?, action: @escaping () -> Void) -> some View {
+        Button {
+            if let pid = promptId { SystemPrompts.shared.select(pid) }
+            action()
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 38, height: 38)
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(DoubaoTheme.subText)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 128, alignment: .topLeading)
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(DoubaoTheme.card)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 
     /// v2.9.78：首页能力小卡片（两列网格）
@@ -439,10 +616,54 @@ struct ChatView: View {
         store.send(text, using: cfg, reasoningLevel: thinkEnabled ? reasoning : 5, smartSearch: smartSearch, in: store.selectedId)
     }
 
+    /// 豆包式页头（有消息的会话页）：胶囊「‹ 会话标题」+ 模型胶囊 + 右侧操作
+    private var doubaoChatHeader: some View {
+        DoubaoChatHeader(
+            title: store.currentTitle,
+            onBack: {
+                NotificationCenter.default.post(name: .tmOpenConversationList, object: nil)
+            },
+            onDrawer: {
+                withAnimation { uiState.drawerOpen = true }
+            },
+            trailing: AnyView(
+                Menu {
+                    Button { showTerminal = true } label: {
+                        Label("终端（自动进入 /root）", systemImage: "apple.terminal")
+                    }
+                    Button { showHaxComputer = true } label: {
+                        Label("Hax 电脑", systemImage: "desktopcomputer")
+                    }
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(DoubaoTheme.subText)
+                        .frame(width: 32, height: 32)
+                }
+            ),
+            // iOS16+ 模型胶囊已移到 DoubaoModelBar，避免页头出现两排同样的胶囊
+            showModelChip: !doubaoModelBarActive
+        )
+    }
+
+    /// iOS16+ 才在消息区顶部显示模型条（iOS15 仍用页头/导航栏里的模型胶囊）
+    private var doubaoModelBarActive: Bool {
+        if #available(iOS 16.0, *) { return true }
+        return false
+    }
+
     private var messageList: some View {
+        VStack(spacing: 0) {
+            doubaoChatHeader
+            messageScroll
+        }
+    }
+
+    private var messageScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
+                    // v6.9.13（豆包风格）：对话容器统一极浅灰底 + 左右呼吸留白
                     ForEach(store.currentMessages) { msg in
                         MessageBubble(
                             message: msg,
@@ -506,8 +727,11 @@ struct ChatView: View {
                 }
                 // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；
                 // 用户气泡的右留白由 MessageBubble 内部按 isUser 处理
-                .padding(.vertical, 12)
+                // v6.9.13：豆包式留白——上下 16、左右 2（气泡内部各自有 padding）
+                .padding(.vertical, 16)
+                .padding(.horizontal, 2)
             }
+            .background(DoubaoTheme.bg)
             // 点击聊天区空白处收起键盘（v2.9.9）
             .simultaneousGesture(
                 TapGesture().onEnded { dismissKeyboard() }
@@ -688,7 +912,8 @@ struct ChatView: View {
             }
         }
         .padding(.bottom, 8)
-        .background(Color(.systemBackground))
+        // v6.9.13（豆包风格）：输入区底色跟对话列表统一成 #F5F5F7（深色模式自动跟随）
+        .background(DoubaoTheme.bg)
         // v2.9.30：授权弹窗已移出到 NavigationView 外层（见 body 链），
         // 此处不再挂 actionSheet，避免与上方 +号 的 actionSheet 同 view 覆盖。
     }
@@ -1393,6 +1618,127 @@ struct QuickActionCard: View {
 // v4.4.15：气泡点击手势——仅 tool 折叠 / 多选模式注册 onTapGesture；
 // 纯文本气泡(非tool非selection)不注册任何点击手势，否则父级 contentShape+onTapGesture
 // 的手势识别器会抢占内部 Text 的 textSelection 长按 → AI 回复一大段文字长按选字失效(用户实测)
+// MARK: - v6.9.13 会话页模型条（豆包把模型选择收在消息区顶部的小胶囊里）
+
+struct DoubaoModelBar: View {
+    @ObservedObject private var modelStore = ModelStore.shared
+    @State private var showPicker = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: { showPicker = true }) {
+                HStack(spacing: 5) {
+                    Circle().fill(Color.green).frame(width: 6, height: 6)
+                    Text(modelStore.defaultConfig?.name ?? "未选择模型")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DoubaoTheme.subText)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(DoubaoTheme.subText)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(Capsule().fill(DoubaoTheme.card))
+            }
+            .buttonStyle(PlainButtonStyle())
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
+        .sheet(isPresented: $showPicker) { ChatModelPickerSheet() }
+    }
+}
+
+// MARK: - v6.9.13 豆包风格聊天页页头（空会话页用，替代导航栏）
+
+struct DoubaoChatHeader: View {
+    @ObservedObject private var store = ConversationStore.shared
+    @ObservedObject private var modelStore = ModelStore.shared
+    @State private var showModelPicker = false
+
+    var title: String
+    var onBack: () -> Void
+    var onDrawer: () -> Void
+    /// 右侧额外入口（有消息的会话页传入"终端/电脑"菜单；空会话页不传）
+    var trailing: AnyView? = nil
+    /// iOS16+ 会话页上方另有 DoubaoModelBar，这里要隐藏模型胶囊，避免两排一模一样的胶囊
+    var showModelChip: Bool = true
+
+    init(title: String, onBack: @escaping () -> Void, onDrawer: @escaping () -> Void,
+         trailing: AnyView? = nil, showModelChip: Bool = true) {
+        self.title = title
+        self.onBack = onBack
+        self.onDrawer = onDrawer
+        self.trailing = trailing
+        self.showModelChip = showModelChip
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                Button(action: onDrawer) {
+                    Image(systemName: "line.horizontal.3")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Button(action: onBack) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .bold))
+                        Text(title)
+                            .font(.system(size: 16, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 34)
+                    .background(Capsule().fill(DoubaoTheme.card))
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Spacer(minLength: 6)
+
+                // 模型切换（豆包把模型选择收在这一行右侧的小胶囊里）
+                if showModelChip {
+                Button(action: { showModelPicker = true }) {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                        Text(modelStore.defaultConfig?.name ?? "未选择模型")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(DoubaoTheme.subText)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(DoubaoTheme.subText)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .background(Capsule().fill(DoubaoTheme.card))
+                }
+                .buttonStyle(PlainButtonStyle())
+                }
+
+                if let trailing = trailing {
+                    trailing
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+        }
+        .sheet(isPresented: $showModelPicker) {
+            ChatModelPickerSheet()
+        }
+    }
+}
+
 private struct MessageTapModifier: ViewModifier {
     let isTool: Bool
     let selectionMode: Bool
