@@ -40,7 +40,7 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            ChatRootView()
+            ChatView()
                 .disabled(ui.drawerOpen)
 
             if ui.drawerOpen {
@@ -204,11 +204,9 @@ struct ConversationDrawerView: View {
             Spacer()
             // v6.2.7：抽屉头部新建会话入口（配合 ChatView 边缘侧滑手势，
             // 侧滑开抽屉即可一键新建，解决"侧滑无法打开添加新对话页"）
-            // v6.9.12：新建后发通知，ChatRootView 会切到聊天页
             Button(action: {
                 withAnimation { ui.drawerOpen = false }
                 store.newConversation()
-                NotificationCenter.default.post(name: .tmNewConversation, object: nil)
             }) {
                 Image(systemName: "plus.square.fill")
                     .font(.system(size: 20, weight: .semibold))

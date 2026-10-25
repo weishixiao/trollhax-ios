@@ -918,30 +918,6 @@ final class ConversationStore: ObservableObject {
         sortAndSave()
     }
 
-    // MARK: - v6.9.12：对话列表（豆包式）配套操作
-
-    /// 单个会话的消息（列表页做搜索命中时用，避免碰 selected 语义）
-    func messages(in id: UUID) -> [ChatMessage] {
-        conversations.first(where: { $0.id == id })?.messages ?? []
-    }
-
-    /// 会话标题重命名（空标题忽略，最多 60 字）
-    func rename(_ id: UUID, to newTitle: String) {
-        let t = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
-        conversations[idx].title = String(t.prefix(60))
-        sortAndSave()
-    }
-
-    /// 按 id 删除（列表页没有 IndexSet 上下文）
-    func deleteConversations(ids: Set<UUID>) {
-        guard !ids.isEmpty else { return }
-        conversations.removeAll { ids.contains($0.id) }
-        if let sel = selectedId, ids.contains(sel) { selectedId = nil }
-        if selectedId == nil { selectedId = conversations.first?.id }
-        sortAndSave()
-    }
-
     func send(_ text: String, using config: ModelConfig, imageDataURLs: [String]? = nil,
               reasoningLevel: Int = 0, smartSearch: Bool = true,
               appendUserMessage: Bool = true, in convId: UUID? = nil) {
