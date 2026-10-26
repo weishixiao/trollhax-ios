@@ -1,3 +1,9 @@
+> ⚠️ **本项目已迁移至 [weishixiao/TrollHax](https://github.com/weishixiao/TrollHax)**
+>
+> 本仓库（trollhax-ios）**已停用**，不再接收提交、不再构建。最新代码、Release 与 CI 均在
+> **[TrollHax](https://github.com/weishixiao/TrollHax)** 仓库。
+> 下载最新安装包：[TrollHax.tipa](https://github.com/weishixiao/TrollHax/releases/download/latest/TrollHax.tipa)
+
 # TrollHax
 
 **AI 驱动的 iOS 越狱 / TrollStore 实验与 QA 工作台。**

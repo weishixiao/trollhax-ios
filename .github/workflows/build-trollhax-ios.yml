@@ -13,6 +13,8 @@ concurrency:
   group: build-trollhax-ios
   cancel-in-progress: true
 
+# v6.6.31：本仓库已停用，开发主线迁至 weishixiao/TrollHax。
+# 关掉 push / tag 自动触发，只保留手动 workflow_dispatch 以便回滚出包（需要时手动点）。
 on:
   workflow_dispatch:
     # v6.5.9：显式声明 inputs —— App「触发线上编译」会带 {"inputs":{"tweak":<目录名>}}，
@@ -23,12 +25,6 @@ on:
         description: '要编译的 tweak 目录名（留空=全量构建）'
         required: false
         default: ''
-  push:
-    branches: [main]
-    # 纯文档改动不需要重打 108MB 包（README/docs 改动不触发构建）
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
 
 jobs:
   # v4.4.5: 原生工具链（lua arm64 iOS 交叉编译，产物缓存秒级）。
