@@ -40,8 +40,6 @@ struct SettingsView: View {
     // v4.3.30：更新镜像源编辑器
     @State private var showMirrorEditor = false
     @State private var mirrorsText = ""
-    // v4.5.1：桌面悬浮开关结果刷新触发器（HUDManager.lastStartError 非 @Published，用它触发 body 重建显示原因）
-    @State private var hudRefresh = false
     // v6.2.1：重置所有数据确认弹窗
     @State private var showResetAlert = false
 
@@ -185,24 +183,7 @@ struct SettingsView: View {
                              }
                          })
         ]
-        // v4.5.0：可爱助手开关（聊天页右下角悬浮 + 语音/点击互动，可切换角色）
-        controlItems.append(SettingsItem(
-            title: "可爱助手",
-            subtitle: HUDManager.shared.lastStartError
-                ?? (HUDManager.shared.isRunning ? "桌面悬浮运行中 · 手机桌面显示" : "桌面悬浮未运行 · 手机桌面隐藏"),
-            icon: "heart.fill",
-            color: .pink,
-            // 点击进入角色选择页（v6.0.2：角色选择直接放进可爱助手）
-            destination: AnyView(GirlCharacterPickerView()),
-            isOn: { GirlCompanion.shared.enabled },
-            onToggle: { on in
-                GirlCompanion.shared.enabled = on
-                // 打开可爱助手即自动拉起桌面悬浮 HUD（HUD 显示当前角色小女孩）
-                if on { _ = HUDManager.shared.start() }
-                else { _ = HUDManager.shared.stop() }
-                hudRefresh.toggle()
-            }
-        ))
+        // v6.9.14：可爱助手（桌宠 / HUD）已按用户要求整块移除
         groups.append(SettingsGroup(header: L10n.t("sec_control"), items: controlItems))
 
         // 开发者（v6.0.28：默认开启，去掉开关）

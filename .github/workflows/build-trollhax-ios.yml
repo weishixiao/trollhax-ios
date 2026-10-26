@@ -422,7 +422,7 @@ jobs:
     if: always() && needs.native-tools.result == 'success'
     runs-on: macos-latest
     env:
-      RELEASE_VERSION: 6.6.27
+      RELEASE_VERSION: 6.6.28
     steps:
       - uses: actions/checkout@v4
 
@@ -459,38 +459,7 @@ jobs:
           # v2.9.315：默认注入 ControlAgent v1（合并版 UI 控制+保活+截图）
           cp "Resources/tweaks/ControlAgent.dylib" "Resources/bin/ControlAgent.dylib"
           ls -lh Resources/tweaks/
-          # v4.5.1：桌面悬浮 HUD（TrollSpeed 独立二进制，application.mk 编 TrollAgentHUD.app）。
-          # 用 make（非 make package）：产物 .theos/obj/debug/TrollAgentHUD.app 编译即生成，无需 deb control。
-          # 软失败：本轮先验证 theos 能否编出 HUD；失败只告警不阻断（角色选择等主 App 功能照常出包）。
-          echo ">>> building HUD"
-          if (cd HUD && make); then
-            HUDAPP="HUD/.theos/obj/debug/TrollAgentHUD.app"
-            if [ -d "$HUDAPP" ]; then
-              rm -rf Resources/hud
-              mkdir -p Resources/hud
-              cp -R "$HUDAPP" "Resources/hud/TrollAgentHUD.app"
-              # v6.0.6：theos application.mk 不生成 Info.plist → UIApplication 无法从 bundle 读
-              # NSPrincipalClass/CFBundleIdentifier → UIApplicationInitialize 后进程退出（hudapp.log 停在
-              # step=UIApplicationInitialize-ok）。参照 TrollSpeed Resources/Info.plist 从仓库补拷。
-              cp "HUD/Info.plist" "Resources/hud/TrollAgentHUD.app/Info.plist"
-              echo ">>> HUD Info.plist: $(wc -c < Resources/hud/TrollAgentHUD.app/Info.plist) bytes"
-              # v6.0.4：给独立 HUD 二进制 ldid -S 签完整 entitlements（含 platform-application/persona-mgmt）——
-              # persona 99 提权必需；TrollStore 重签会保留 platform-app（TrollSpeed/TheBall 正解）
-              # 注意：ldid -S 后必须紧跟 entitlements 文件（无空格），写成 `-S "plist" "binary"` 会把 plist 当
-              # 二进制读 → "Unknown header magic" → HUD 二进制没签名 → UIApplication 缺 platform-app 进程退出。
-              HUD_BIN="Resources/hud/TrollAgentHUD.app/TrollAgentHUD"
-              if ldid "-SHUD/supports/entitlements.plist" "$HUD_BIN" 2>/tmp/hud_sign.err; then
-                echo ">>> HUD ldid signed (full entitlements)"
-              else
-                echo "WARN: HUD ldid sign failed: $(cat /tmp/hud_sign.err)"
-              fi
-              echo ">>> HUD bundled: $(du -sh Resources/hud/TrollAgentHUD.app | cut -f1)"
-            else
-              echo "WARN: HUD make ok but no app found (.theos/obj/debug missing)"
-            fi
-          else
-            echo "WARN: HUD build FAILED (soft) — desktop HUD not bundled this build"
-          fi
+          # v6.9.14：可爱助手 / 桌面悬浮 HUD 已删除，不再构建 TrollAgentHUD.app
 
       - name: Build sqlite_wipe (iOS arm64 root tool)
         run: |

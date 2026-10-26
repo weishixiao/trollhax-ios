@@ -1,27 +1,17 @@
 import UIKit
 import SwiftUI
 
-// 桌面悬浮 HUD 单可执行双模式（TrollSpeed 正解）：主 App 可执行（TrollStore 有效签名）
-// 由 HUDManager 以 root persona 拉起，argv 带 -hud 进悬浮模式；-exit/-check 关闭/查存活。
-// 符号由 libHUD.a 提供（HUD/sources 编出的 ObjC++ 悬浮核心，HUDApp.mm extern "C" 导出）。
-@_silgen_name("HUDMainStart") func HUDMainStart()
-@_silgen_name("HUDExit") func HUDExit()
-@_silgen_name("HUDCheck") func HUDCheck() -> Int32
+// v6.9.14：桌面悬浮 HUD（可爱助手 / 桌宠）已按用户要求整块移除，
+// 这里只保留 -trollish（iSH 隔离子模式）与正常 App 启动两条路径。
 
 @main
 struct TrollHaxApp {
     static func main() {
         let args = CommandLine.arguments
-        if args.contains("-hud") {
-            HUDMainStart()        // 进悬浮模式（内部 runloop，不返回）
-        } else if args.contains("-exit") {
-            HUDExit()             // 关闭悬浮（读 pid 杀）
-        } else if args.contains("-check") {
-            exit(HUDCheck())      // 查悬浮存活（EXIT_FAILURE=存活 / EXIT_SUCCESS=未跑）
-        } else if args.contains("-trollish") {
+        if args.contains("-trollish") {
             // v6.3.9：iSH 引擎隔离子模式——主 App 用 posix_spawn 把自己以本模式拉起，
             // 命令在子进程内跑引擎；引擎段错误只死子进程，主 App 存活（不闪退）。
-            // 复用主可执行 → 无需新构建目标/额外签名（同 -hud 双模式思路）。
+            // 复用主可执行 → 无需新构建目标/额外签名。
             TrollishRunner.runChildMode(args: args)   // 内部不返回
         } else {
             UIApplicationMain(
@@ -63,17 +53,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         // 会把局域网 8790 黑洞；启动时后台查一次，存在残留即删，保证远程通道可靠）
         DispatchQueue.global(qos: .utility).async {
             VpnManager.cleanupStaleConfig()
-        }
-        // v6.0.x：可爱助手开启则启动自动拉起桌面悬浮 HUD。
-        // 直接读 UserDefaults（不经 GirlCompanion.shared 时序），延迟 2s 确保 UI/进程就绪再拉起。
-        // v6.1.5-5：覆盖安装后旧 HUD 进程仍在跑（launchd KeepAlive 不换新二进制），
-        // 启动先做版本同步：检测到二进制更新则强制重启换新
-        HUDManager.shared.syncAfterUpdate()
-        let girlEnabled = UserDefaults.standard.bool(forKey: "trollmcp2.girl_companion_enabled")
-        if girlEnabled {
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 2) {
-                _ = HUDManager.shared.start()
-            }
         }
         // v4.3.39：启动静默检查更新——后台跑，不打扰；发现新版点亮设置页"检查更新"红点
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
@@ -125,14 +104,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             backgroundTask = .invalid
         }
         BackgroundKeepAlive.cancelRefresh()
-        // v6.1.5-5：回前台先做 HUD 版本同步（覆盖安装后自动换新 HUD 进程）
-        HUDManager.shared.syncAfterUpdate()
-        // v6.0.7：锁屏久了 HUD 进程可能被系统清理；回前台自动检查，若可爱助手开着但悬浮没跑则拉起
-        if GirlCompanion.shared.enabled && !HUDManager.shared.isRunning {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                _ = HUDManager.shared.start()
-            }
-        }
     }
 
     // MARK: v2.9.126 —— 深链导入模型 API 配置（对齐 cc-switch DeepLinkImportDialog）
@@ -149,11 +120,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
 
         let path = comps.host ?? ""
-        // v6.1.5-14b：HUD 快捷菜单——AI 聊天（主界面即聊天，唤起即达）
+        // AI 聊天（主界面即聊天，唤起即达）——深链 trollagent://chat 保留（外部快捷指令也会用）
         if path == "chat" {
             return true
         }
-        // v6.1.5-14b：HUD 快捷菜单——主 App 代开目标 app（HUD 权限失效时的可靠兜底）
+        // 代开目标 app——深链 trollagent://open?bid=… 保留（快捷指令/外部调用通用）
         // 链接格式: trollagent://open?bid=<bundleId>&url=<scheme>
         if path == "open" {
             let bid = value("bid") ?? ""

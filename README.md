@@ -217,7 +217,6 @@ CLZMA/                 LZMA SDK + xz-embedded
 CCapstone/             capstone 封装
 CPyEmbed/              Python dlopen 桥接
 VansonEngine/          内存引擎（GPL-3.0）
-HUD/                   悬浮网速/角色 HUD
 tweaks/                内置 tweak（Theos）
 scripts/               构建脚本
 Support/               Info.plist / entitlements

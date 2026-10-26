@@ -29,11 +29,7 @@ if [ ! -f "openssl-stage/lib/libssl.a" ]; then
 fi
 echo ">>> OpenSSL: $(du -sh openssl-stage/lib | cut -f1)"
 
-# v4.5.2：桌面悬浮 HUD 单可执行双模式（TrollSpeed 正解）——先把 HUD/sources 的 ObjC++
-# 悬浮核心编成 libHUD.a，主 App（SwiftPM）链接（Package.swift unsafeFlags 引用）。
-# 必须在此之前跑完，否则主 App swift build 链接缺 libHUD.a 失败。
-echo ">>> building libHUD.a (desktop floating HUD core)"
-bash scripts/build-hud.sh
+# v6.9.14：可爱助手 / 桌面悬浮 HUD 已删除，不再编译 libHUD.a
 
 # v6.7.0：VansonMod 内存引擎（GPL-3.0）——VansonEngine/ 的 ObjC++/C++ 内存扫描引擎编成
 # libVansonEngine.a，主 App（SwiftPM target VansonEngine）链接后 memory 工具走原生后端。
@@ -201,9 +197,6 @@ if [ -d "Resources/bin" ]; then
     fi
 fi
 
-# v4.5.2：桌面悬浮 HUD 已改为【单可执行双模式】——HUD ObjC 核心编成 libHUD.a 直接链接进主可执行
-#（见上方 build-hud.sh + Package.swift），不再打进独立 TrollHaxHUD 二进制（假签名被 AMFI 106/109 拒，
-# 已废弃）。主可执行被 TrollStore 有效签名，-hud 复用有效签名 → 悬浮进程 AMFI 放行。
 
 # v4.4.4: 原生 Python 集成（CPython 3.14 iOS, PEP 730）。
 # CI 由 native-python job 编译 Python.xcframework 并 upload artifact（tar.gz 包装）；

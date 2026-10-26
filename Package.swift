@@ -172,21 +172,7 @@ let package = Package(
                 // v6.6.22：db 工具进程内读库（不依赖 Alpine 的 sqlite3）
                 .linkedLibrary("sqlite3"),
                 .linkedFramework("NetworkExtension"),
-                // v4.5.2：桌面悬浮 HUD 单可执行双模式（TrollSpeed 正解）——链接 libHUD.a
-                //（HUD/sources 编出的 ObjC++ 悬浮核心）+ 私有 framework tbd（HUD/libraries）。
-                // build-ipa.sh 在 swift build 前先编 libHUD.a → hud-stage/lib/libHUD.a。
-                .unsafeFlags([
-                    "-L", "hud-stage/lib", "-lHUD",
-                    "-F", "HUD/libraries",
-                    // v4.5.3：私有 framework 全部 weak 链接（-Xlinker 透传，swiftc 不认 -weak_framework）——
-                    // 正常 App 启动时即使 dyld 加载这些 framework 受限也不致崩溃；HUD 只在 -hud 分支真正调用。
-                    "-Xlinker", "-weak_framework", "-Xlinker", "BackBoardServices",
-                    "-Xlinker", "-weak_framework", "-Xlinker", "GraphicsServices",
-                    "-Xlinker", "-weak_framework", "-Xlinker", "SpringBoardServices",
-                    "-Xlinker", "-weak_framework", "-Xlinker", "AssertionServices",
-                    "-Xlinker", "-weak_framework", "-Xlinker", "IOKit",
-                    "-lc++",
-                ])
+                // v6.9.14：可爱助手 / 桌面悬浮 HUD 已删除，不再链接 libHUD.a 与私有 framework tbd。
             ]
         ),
     ]
