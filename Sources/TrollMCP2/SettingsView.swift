@@ -267,10 +267,7 @@ struct SettingsView: View {
                          subtitle: "缓存 · 钥匙串 · 广告符 · 数据容器 · 系统清理",
                          icon: "sparkles.rectangle.stack", color: .orange,
                          destination: AnyView(CleanupCenterView())),
-            SettingsItem(title: "Coruna 安全盾",
-                         subtitle: "检测恶意网站 · 拦截利用 · Web 注入",
-                         icon: "shield.lefthalf.filled", color: .green,
-                         destination: AnyView(CorunaShieldView())),
+            // v6.9.15：Coruna 安全盾 / Web 注入已按用户要求删除
         ]))
 
         // 关于

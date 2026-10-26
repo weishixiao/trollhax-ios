@@ -10,7 +10,7 @@ final class BrowserManager: NSObject, ObservableObject, WKNavigationDelegate {
 
     static let shared = BrowserManager()
 
-    // v4.3.65：共享渲染进程池——BrowserView 预览 / Coruna 注入页等多 WKWebView 共用，降低内存占用
+    // v4.3.65：共享渲染进程池——BrowserView 预览等多 WKWebView 共用，降低内存占用
     static let sharedProcessPool = WKProcessPool()
 
     // v4.3.65：广告/追踪内容拦截（WKContentRuleList，对应 reynard-browser 的 ContentBlockingController 思路）

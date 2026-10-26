@@ -110,7 +110,7 @@ final class SystemPrompts {
             - User attachments: auto-saved to workspace uploads/; when the user says "saved to <path>", read that path
               directly (artifact list / read) — don't scan the whole filesystem.
             - Known bugs: see ENVIRONMENT PROMPT §KNOWN BUGS (single source).
-            - Features: Coruna security shield (iOS ≤17.2); cleanup center (shell du -sh / rm -rf + container);
+            - Features: cleanup center (shell du -sh / rm -rf + container);
               verified:true tools are tested and safe.
             - Self-evolution: can load external dylibs via inject load_dylib (names start custom. / user.); cannot write
               shell/root/inject/delete dangerous operations.
